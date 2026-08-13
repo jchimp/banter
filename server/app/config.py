@@ -11,6 +11,9 @@ class Settings(BaseSettings):
 
     # --- storage -----------------------------------------------------------
     data_dir: Path = Path("/data")
+    # Reject uploads larger than this. A 60s 16kHz mono 16-bit WAV is ~1.9MB;
+    # 10MiB is generous headroom without being unbounded.
+    max_upload_bytes: int = 10_485_760
 
     # --- auth --------------------------------------------------------------
     # Shared secret the kidbox sends as X-API-Key. Empty disables auth (dev only).
