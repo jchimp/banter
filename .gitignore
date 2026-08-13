@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.env
+data/
+*.db
+*.db-wal
+*.db-shm
+banter-queue/
+banter-cache/

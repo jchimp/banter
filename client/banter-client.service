@@ -1,0 +1,18 @@
+[Unit]
+Description=Banter kidbox client
+After=network-online.target sound.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/banter/client
+EnvironmentFile=/home/pi/banter/client/.env
+ExecStart=/home/pi/.local/bin/uv run --no-dev banter-client
+Restart=on-failure
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

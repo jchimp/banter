@@ -1,0 +1,119 @@
+<svg viewBox="0 0 1080 760" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace, 'JetBrains Mono', Menlo, monospace">
+  <style>
+    .bg{fill:#0f141a}
+    .panel{fill:#1a2129;stroke:#2c3742;stroke-width:1.5}
+    .hat{fill:#15323a;stroke:#2dd4bf;stroke-width:1.5}
+    .pin{fill:#11181f;stroke:#3a4753;stroke-width:1.5}
+    .title{fill:#e6edf3;font-size:23px;font-weight:700}
+    .sub{fill:#8b98a5;font-size:13px}
+    .lbls{fill:#e6edf3;font-size:13px;font-weight:700}
+    .mut{fill:#8b98a5;font-size:12px}
+    .tiny{fill:#8b98a5;font-size:10px}
+    .teal{fill:#2dd4bf;font-size:13px;font-weight:700}
+    .w5{stroke:#f0616d;stroke-width:3.5;fill:none}
+    .wg{stroke:#7c8794;stroke-width:3.5;fill:none}
+    .wd{stroke:#4ade80;stroke-width:3.5;fill:none}
+    .wb{stroke:#60a5fa;stroke-width:3.5;fill:none}
+    .dot5{fill:#f0616d}.dotg{fill:#7c8794}.dotd{fill:#4ade80}.dotb{fill:#60a5fa}
+  </style>
+
+  <rect class="bg" x="0" y="0" width="1080" height="760"/>
+  <text class="title" x="30" y="42">Banter / kidbox — wiring (Pi Zero 2 W + Codec Zero)</text>
+  <text class="sub" x="30" y="64">Mic, speaker amp and a spare button live on the HAT. You wire only: 2 arcade buttons, 1 NeoPixel ring, 1 speaker.</text>
+
+  <!-- Pi + HAT -->
+  <rect class="panel" x="30" y="100" width="250" height="420" rx="10"/>
+  <text class="lbls" x="45" y="128">Raspberry Pi Zero 2 W</text>
+  <rect class="hat" x="45" y="146" width="220" height="140" rx="8"/>
+  <text class="teal" x="58" y="170">Codec Zero HAT</text>
+  <text class="mut" x="58" y="192">on-board MEMS mic</text>
+  <text class="mut" x="58" y="210">speaker amp (8Ω, 1.2W)</text>
+  <text class="mut" x="58" y="228">spare button  GPIO27</text>
+  <text class="mut" x="58" y="246">status LEDs  GPIO23/24</text>
+  <rect class="pin" x="196" y="256" width="62" height="24" rx="5"/>
+  <text class="tiny" x="205" y="272">SPK + −</text>
+
+  <text class="mut" x="45" y="312">stacking header exposes</text>
+  <text class="mut" x="45" y="328">GPIO above the HAT →</text>
+  <rect x="45" y="338" width="182" height="20" fill="#11181f" stroke="#3a4753"/>
+  <g fill="#3a4753"><rect x="50" y="342" width="6" height="6"/><rect x="62" y="342" width="6" height="6"/><rect x="74" y="342" width="6" height="6"/><rect x="86" y="342" width="6" height="6"/><rect x="98" y="342" width="6" height="6"/><rect x="110" y="342" width="6" height="6"/><rect x="122" y="342" width="6" height="6"/><rect x="134" y="342" width="6" height="6"/><rect x="146" y="342" width="6" height="6"/><rect x="158" y="342" width="6" height="6"/><rect x="170" y="342" width="6" height="6"/><rect x="182" y="342" width="6" height="6"/><rect x="194" y="342" width="6" height="6"/><rect x="206" y="342" width="6" height="6"/><rect x="218" y="342" width="6" height="6"/></g>
+
+  <rect class="pin" x="45" y="466" width="140" height="28" rx="5"/>
+  <text class="tiny" x="55" y="484">micro-USB  5V 2.5A</text>
+
+  <!-- PIN NODES -->
+  <rect class="pin" x="360" y="100" width="196" height="42" rx="8"/>
+  <circle class="dot5" cx="372" cy="121" r="6"/><text class="lbls" x="386" y="118">Pin 2 · 5V</text><text class="tiny" x="386" y="134">power rail</text>
+
+  <rect class="pin" x="360" y="160" width="196" height="42" rx="8"/>
+  <circle class="dotg" cx="372" cy="181" r="6"/><text class="lbls" x="386" y="178">Pin 6 · GND</text><text class="tiny" x="386" y="194">ground rail</text>
+
+  <rect class="pin" x="360" y="252" width="196" height="42" rx="8"/>
+  <circle class="dotb" cx="372" cy="273" r="6"/><text class="lbls" x="386" y="270">Pin 11 · GPIO17</text><text class="tiny" x="386" y="286">BTN 1 — RECORD</text>
+
+  <rect class="pin" x="360" y="312" width="196" height="42" rx="8"/>
+  <circle class="dotb" cx="372" cy="333" r="6"/><text class="lbls" x="386" y="330">Pin 15 · GPIO22</text><text class="tiny" x="386" y="346">BTN 2 — PLAY</text>
+
+  <rect class="pin" x="360" y="404" width="196" height="42" rx="8"/>
+  <circle class="dotd" cx="372" cy="425" r="6"/><text class="lbls" x="386" y="422">Pin 19 · GPIO10</text><text class="tiny" x="386" y="438">SPI0 MOSI → ring data</text>
+
+  <!-- BUSES -->
+  <path class="w5" d="M556 121 H606 V690"/>
+  <path class="wg" d="M556 181 H630 V690"/>
+  <text class="tiny" x="592" y="708">5V</text>
+  <text class="tiny" x="618" y="708">GND</text>
+
+  <!-- BTN1 -->
+  <rect class="panel" x="716" y="240" width="250" height="66" rx="10"/>
+  <text class="lbls" x="731" y="264">BTN 1 · Record (green)</text>
+  <text class="tiny" x="731" y="282">switch lug → GPIO17</text>
+  <text class="tiny" x="731" y="298">switch lug → GND    (LED lugs separate)</text>
+  <circle class="dotb" cx="708" cy="262" r="5"/><circle class="dotg" cx="708" cy="288" r="5"/>
+  <path class="wb" d="M556 273 H708"/><path class="wg" d="M630 288 H708"/>
+
+  <!-- BTN2 -->
+  <rect class="panel" x="716" y="322" width="250" height="66" rx="10"/>
+  <text class="lbls" x="731" y="346">BTN 2 · Play (blue)</text>
+  <text class="tiny" x="731" y="364">switch lug → GPIO22</text>
+  <text class="tiny" x="731" y="380">switch lug → GND</text>
+  <circle class="dotb" cx="708" cy="344" r="5"/><circle class="dotg" cx="708" cy="370" r="5"/>
+  <path class="wb" d="M556 333 H708"/><path class="wg" d="M630 370 H708"/>
+
+  <!-- RING -->
+  <rect class="panel" x="716" y="406" width="250" height="150" rx="10"/>
+  <text class="lbls" x="731" y="430">NeoPixel Ring 16 (status glow)</text>
+  <circle cx="880" cy="500" r="30" fill="none" stroke="#4ade80" stroke-width="6" stroke-dasharray="3 6"/>
+  <text class="tiny" x="731" y="462">DIN</text><text class="tiny" x="731" y="490">5V</text><text class="tiny" x="731" y="518">GND</text>
+  <text class="tiny" x="731" y="544">behind 45mm diffuser</text>
+  <circle class="dotd" cx="708" cy="458" r="5"/><circle class="dot5" cx="708" cy="486" r="5"/><circle class="dotg" cx="708" cy="514" r="5"/>
+  <path class="wd" d="M556 425 H632"/>
+  <rect x="632" y="418" width="42" height="14" fill="#11181f" stroke="#4ade80"/>
+  <text class="tiny" x="637" y="414">470Ω</text>
+  <path class="wd" d="M674 425 H694 V458 H708"/>
+  <path class="w5" d="M606 486 H708"/>
+  <path class="wg" d="M630 514 H708"/>
+  <rect x="608" y="560" width="46" height="16" fill="#11181f" stroke="#8b98a5"/>
+  <text class="tiny" x="611" y="572">1000µF</text>
+  <path class="w5" d="M616 560 V551"/><path class="wg" d="M644 560 V551"/>
+
+  <!-- SPEAKER -->
+  <rect class="panel" x="300" y="560" width="210" height="76" rx="10"/>
+  <text class="lbls" x="315" y="584">Speaker 8Ω 1–3W</text>
+  <text class="tiny" x="315" y="602">→ Codec Zero SPK + / −</text>
+  <text class="tiny" x="315" y="620">no GPIO — screw terminals on HAT</text>
+  <path d="M258 268 C 292 268, 288 580, 300 592" fill="none" stroke="#2dd4bf" stroke-width="3"/>
+
+  <!-- LEGEND -->
+  <rect class="panel" x="30" y="560" width="250" height="120" rx="10"/>
+  <text class="lbls" x="45" y="584">Legend</text>
+  <line x1="45" y1="602" x2="75" y2="602" class="w5"/><text class="tiny" x="82" y="606">5V</text>
+  <line x1="140" y1="602" x2="170" y2="602" class="wg"/><text class="tiny" x="177" y="606">GND</text>
+  <line x1="45" y1="626" x2="75" y2="626" class="wb"/><text class="tiny" x="82" y="630">GPIO in (button → GND)</text>
+  <line x1="45" y1="650" x2="75" y2="650" class="wd"/><text class="tiny" x="82" y="654">NeoPixel data</text>
+  <text class="tiny" x="45" y="672">Buttons use internal pull-ups: no resistors.</text>
+
+  <!-- NOTES -->
+  <rect class="panel" x="30" y="700" width="1020" height="44" rx="10"/>
+  <text class="tiny" x="45" y="720">RESERVED — do not reuse: GPIO2/3 (I2C), GPIO18/19/20/21 (I2S audio), GPIO27 (HAT button), GPIO23/24 (HAT LEDs).  Free spares: GPIO5, 6, 12, 13, 16, 25.</text>
+  <text class="tiny" x="45" y="736">Ring on SPI0 needs  dtparam=spi=on  and  core_freq_min=500  in /boot/firmware/config.txt.   Halo variant: chain ring B DIN ← ring A DOUT, same GPIO10.</text>
+</svg>
