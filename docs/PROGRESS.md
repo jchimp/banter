@@ -1,9 +1,9 @@
 # Project Progress
 
 ## Current Focus
-M1 (record loop) and M2 (playback loop) are both complete and verified on desktop.
-`m1-record-loop` is unmerged; M2 work is on `m2-playback-loop`, also unmerged. Next up
-is M3 — the Telegram bot.
+M2 (playback loop) is committed on `m2-playback-loop` and verified on desktop against a
+real Docker server. Both it and `m1-record-loop` are unmerged and unpushed. Next up is
+M3 — the Telegram bot.
 
 ## Open Todos
 - [x] M0 — skeleton, config, migrations, healthz, test harness
@@ -23,66 +23,28 @@ is M3 — the Telegram bot.
 ## Progress Log
 
 ### 2026-08-12 (M2)
-- M2 shipped end-to-end: `select_next()` (pure, all 4 tiers + FR-13 no-repeat +
-  tier-3 rank weighting), `GET /api/recordings/next`/`/{id}/audio`,
-  `POST /{id}/played`, migration `002_plays_device_time_index.sql`, client
-  `player.py` + `cache.py`, and `RecordController.play_next()` wired to BTN2.
-- Decided: playback is two round trips (`/next` then `/{id}/audio`), not one — keeps
-  the selection response small and lets the client skip the download entirely on a
-  cache hit.
-- Decided: a `204` from `/next` means "nothing to play," full stop. The client does
-  *not* fall back to the local cache on a 204 — cache fallback is reserved for
-  "the server is unreachable," a materially different condition than "there's
-  genuinely nothing selectable."
-- Decided: play receipts (`POST /{id}/played`) are best-effort and fire *after*
-  playback finishes, with no retry loop. A dropped receipt must never delay or block
-  audio; the server dedupes on `(recording_id, device_id, played_at)` so a future
-  retry would be safe to add without changing the contract.
-- Decided: tier 3 (kid recordings) uses rank-based weighting toward
-  least-recently-played rather than a uniform pick, so one clip doesn't dominate
-  after a fresh device with no play history starts working through the pool.
-- FR-13's no-repeat exclusion applies per tier — a tier emptied *only* by the
-  exclusion falls through to the next one rather than returning the repeat. The
-  single-item exception (replay the last-played clip when it's the only candidate
-  left) is checked once, after tier 4 is exhausted, not per tier.
-- Normalised the empty/missing `id` on upload from FastAPI's default 422 to a 400 —
-  closes the open todo from M1; the kidbox shouldn't have to distinguish "missing"
-  from "malformed."
-- Caught in review: `store.py` initially redefined its own `Candidate` dataclass
-  instead of importing `app.selection.Candidate`, which would have silently forked
-  the type the pure function is tested against from the type the DB layer actually
-  builds. Fixed to import.
-- Caught in review: the controller's play worker thread could crash inside
-  `fetch_next()` (network/serialization edge cases) without the exception handler
-  settling the state machine back to `IDLE`, stranding the box in `PLAYING` with
-  both buttons dead until restart. Fixed by wrapping the worker body and always
-  resetting state on any exception, not just the expected failure paths.
-- Added a store-driven eviction test after noticing every `PlayCache` eviction test
-  called `_evict()` directly — removing the `_evict` call from `store()` would have
-  left the suite green. Verified by mutation: the new test is the only one that fails.
-- Suites: 74 server / 92 client, ruff clean in both.
-- Post-M2 fix (same day): BTN2 hung ~30s after the server container was stopped.
-  Cause was not connection refusal — Docker keeps its port proxy bound after the
-  container stops, so TCP connects and nothing answers, stalling until the read
-  timeout. Split the timeouts (`BANTER_NEXT_TIMEOUT=3.0` for the small JSON calls,
-  `BANTER_HTTP_TIMEOUT=30.0` still for the audio download) and added an offline memo
-  (`BANTER_OFFLINE_MEMO_SECONDS=30.0`) so only the first tap of an outage pays a
-  timeout. Rejected the obvious `/healthz` pre-check: it would hang exactly as long
-  on the same timeout and costs an extra round trip when healthy.
-- Measured, not assumed: first offline tap 4.05s (localhost resolves to both ::1 and
-  127.0.0.1, ~2s per refusal on Windows — the timeout wasn't even the binding
-  constraint locally), subsequent taps 0.00s.
-- Found while measuring: the offline fallback claimed to rotate but ping-ponged
-  between the two oldest clips, because serving a clip never advanced its LRU
-  position. Now touches on serve; verified it cycles all four cached clips.
-- Post-M2 hardening: the play cache now validates that a downloaded body parses as a
-  WAV before committing it, sweeps unplayable entries at startup, and skips them in
-  `oldest()`. Prompted by stub files polluting the dev cache during the timeout work,
-  but the real-world case is a captive portal answering 200 with a sign-in page: that
-  would have been cached as `{id}.wav` and played back as silence. A rejected download
-  also marks the network unreachable, so the junk isn't re-fetched on every press.
-- Suites after the fix: 74 server / 107 client.
-- Next: M3 — the Telegram bot.
+- M2 shipped and committed: 8 commits on `m2-playback-loop`, 38 files, +4659/−119 —
+  `select_next()`, the three playback routes, migration `002`, client `player.py` +
+  `cache.py`, BTN2 wiring. Suites 74 server / 107 client, ruff clean.
+- Decided: two round trips (`/next` then `/{id}/audio`), so a cache hit skips the
+  download; `204` means "nothing to play" and does *not* trigger cache fallback (that's
+  reserved for unreachable); receipts are best-effort after playback with no retry, the
+  server deduping on `(recording_id, device_id, played_at)`.
+- Decided: tier 3 is rank-weighted toward least-recently-played, not uniform. FR-13's
+  exclusion applies per tier and falls through when it empties one; the single-item
+  exception is checked once after tier 4. Upload `id` 422→400 closes the M1 todo.
+- Review catches: `store.py` forked its own `Candidate` instead of importing the one
+  the pure function is tested against; the play worker could crash and strand the box
+  in `PLAYING` with both buttons dead until restart; every `PlayCache` eviction test
+  called `_evict()` directly, so `store()`'s call to it was uncovered (mutation-verified).
+- BTN2 hung ~30s with the server down — not connection refusal, but Docker keeping its
+  port proxy bound so TCP connects and nothing answers. Split the timeouts
+  (`BANTER_NEXT_TIMEOUT=3.0` vs `HTTP_TIMEOUT=30.0` for audio) and added a 30s offline
+  memo; measured 4.05s then 0.00s. Rejected a `/healthz` pre-check: same hang, plus a
+  round trip when healthy.
+- Hardening: the cache rejects downloads that don't parse as WAV (captive-portal case),
+  sweeps bad entries at startup, and skips them in `oldest()`; the offline fallback now
+  advances the LRU so it cycles instead of ping-ponging two clips. Next: M3.
 
 ### 2026-08-12 (M1)
 - M1 shipped end-to-end: upload endpoint, durable client queue, uploader thread,
