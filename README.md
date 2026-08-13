@@ -130,6 +130,14 @@ so repeated offline taps cycle through the whole cache rather than alternating b
 the two oldest clips. A fallback clip has no server-known id, so no play receipt is
 posted for it.
 
+**Only real audio gets cached.** `store()` parses the downloaded body as a WAV before
+committing it, so a 200 carrying something other than audio — a captive portal or proxy
+sign-in page is the realistic case on guest WiFi — is rejected rather than cached and
+later played back as silence. That also memoes the network as unreachable, so the same
+junk isn't re-fetched on every press. Entries that arrive some other way (an older
+client, a hand-copied file) are swept at startup, and `oldest()` skips anything
+unplayable so a bad entry can't wedge the offline fallback.
+
 **Failing fast when the server is down.** A stopped server doesn't always refuse
 connections — Docker keeps its port proxy bound after the container stops, so the TCP
 connect succeeds and nothing ever answers. Two settings keep BTN2 responsive in that

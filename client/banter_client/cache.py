@@ -12,10 +12,30 @@ mid-write can never become a playable cache entry.
 import contextlib
 import logging
 import os
+import wave
 from collections.abc import Iterable
 from pathlib import Path
 
 log = logging.getLogger("banter.cache")
+
+
+class CorruptAudioError(Exception):
+    """A downloaded body wasn't a playable WAV, so it was never committed to the cache."""
+
+
+def is_playable_wav(path: Path) -> bool:
+    """Whether `path` parses as a WAV with the chunks a player actually needs.
+
+    A `RIFF` magic check alone isn't enough: the failure this guards against is a
+    captive portal or proxy answering 200 with an HTML body, which `wave` rejects for
+    a missing `fmt `/`data` chunk rather than a bad magic. Header-only parse, so the
+    cost is a few hundred microseconds regardless of clip size.
+    """
+    try:
+        with wave.open(str(path), "rb") as wf:
+            return wf.getnframes() > 0
+    except (wave.Error, OSError, EOFError):
+        return False
 
 
 class PlayCache:
@@ -29,6 +49,23 @@ class PlayCache:
         # it can't be mistaken for one and doesn't linger forever.
         for tmp in self.cache_dir.glob("*.wav.tmp"):
             tmp.unlink(missing_ok=True)
+        self._sweep_corrupt()
+
+    def _sweep_corrupt(self) -> None:
+        """Drop cache entries that won't play, once, at startup.
+
+        `store()` refuses to commit a non-WAV, so in normal operation this finds
+        nothing. It exists for entries that arrived some other way — an older client
+        version, a hand-copied file, a half-restored backup — which would otherwise
+        occupy a cache slot forever and hand the kid silence when served as the offline
+        fallback. Deleting derived cache data is not the "never hard-delete audio" rule
+        (that governs the server's recordings); eviction already deletes here.
+        """
+        for path in self.cache_dir.glob("*.wav"):
+            if not is_playable_wav(path):
+                with contextlib.suppress(FileNotFoundError):
+                    path.unlink()
+                    log.warning("event=cache_corrupt_swept id=%s", path.stem)
 
     def path_for(self, rec_id: str) -> Path:
         """Where a clip would live. Does not imply the file exists."""
@@ -46,6 +83,11 @@ class PlayCache:
         `data` may be a single `bytes` blob or an iterable of chunks (the player
         streams the HTTP response). Written to a `.tmp` sibling first so a failure
         partway through never leaves a truncated file at the real path.
+
+        Raises:
+            CorruptAudioError: the body isn't a playable WAV. Nothing is committed and
+                the tmp file is removed. A 200 carrying an HTML captive-portal page
+                would otherwise be cached as `{rec_id}.wav` and played back as silence.
         """
         dest = self.path_for(rec_id)
         tmp = dest.with_suffix(".wav.tmp")
@@ -56,6 +98,13 @@ class PlayCache:
                 else:
                     for chunk in data:
                         f.write(chunk)
+            # Validate BEFORE os.replace, so a bad body never becomes a cache entry
+            # even for an instant.
+            if not is_playable_wav(tmp):
+                size = tmp.stat().st_size
+                tmp.unlink(missing_ok=True)
+                log.warning("event=cache_rejected id=%s bytes=%d reason=not_wav", rec_id, size)
+                raise CorruptAudioError(f"{rec_id}: response body is not a playable WAV")
             os.replace(tmp, dest)
         except OSError:
             tmp.unlink(missing_ok=True)
@@ -86,7 +135,10 @@ class PlayCache:
         Skipping `exclude` (the clip just played or currently playing) means
         repeated offline taps rotate through the cache instead of replaying one clip.
         """
-        candidates = [p for p in self.entries() if p != exclude]
+        # Belt-and-braces against a bad entry appearing after the startup sweep: the
+        # fallback is the last thing standing when the server is down, so serving
+        # silence here is the worst possible time for it.
+        candidates = [p for p in self.entries() if p != exclude and is_playable_wav(p)]
         if not candidates:
             return None
         return min(candidates, key=self._safe_mtime)

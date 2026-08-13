@@ -8,8 +8,10 @@ until the test fires it, so playback completion is driven explicitly instead of 
 race with a real backend.
 """
 
+import io
 import os
 import threading
+import wave
 from collections.abc import Callable
 from pathlib import Path
 
@@ -22,6 +24,18 @@ from banter_client.player import Clip, Player
 from banter_client.state import State
 
 BASE_MTIME = 1_700_000_000
+
+
+def _wav_bytes(seconds: float = 0.05, rate: int = 16000) -> bytes:
+    """Real mono 16-bit WAV bytes. The cache rejects anything `wave` can't parse, so
+    fixtures have to be actual audio rather than a b"data" placeholder."""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(rate)
+        wf.writeframes(b"\x00\x00" * int(seconds * rate))
+    return buf.getvalue()
 
 
 # --------------------------------------------------------------------------- fakes
@@ -182,13 +196,14 @@ def test_fetch_next_downloads_and_caches_uncached_clip(tmp_path):
     session = FakeSession()
     session.get_responses[settings.next_url] = [FakeResponse(200, json_data={"id": "abc"})]
     audio_url = f"{settings.recordings_url}/abc/audio"
-    session.get_responses[audio_url] = [FakeResponse(200, chunks=[b"hello", b"world"])]
+    wav = _wav_bytes()
+    session.get_responses[audio_url] = [FakeResponse(200, chunks=[wav[:30], wav[30:]])]
     player = Player(settings, session=session)
 
     clip = player.fetch_next()
 
     assert clip == Clip(path=player.cache.path_for("abc"), id="abc", from_cache=False)
-    assert clip.path.read_bytes() == b"helloworld"
+    assert clip.path.read_bytes() == wav
     assert player.cache.has("abc")
 
 
@@ -197,7 +212,7 @@ def test_fetch_next_cache_hit_returns_cached_copy_without_downloading(tmp_path):
     session = FakeSession()
     session.get_responses[settings.next_url] = [FakeResponse(200, json_data={"id": "abc"})]
     player = Player(settings, session=session)
-    player.cache.store("abc", b"cached-data")
+    player.cache.store("abc", _wav_bytes())
 
     clip = player.fetch_next()
 
@@ -212,7 +227,7 @@ def test_fetch_next_204_returns_none_and_does_not_consult_cache(tmp_path):
     session = FakeSession()
     session.get_responses[settings.next_url] = [FakeResponse(204)]
     player = Player(settings, session=session)
-    player.cache.store("cached1", b"data")  # present, but must be ignored
+    player.cache.store("cached1", _wav_bytes())  # present, but must be ignored
 
     assert player.fetch_next() is None
 
@@ -223,7 +238,7 @@ def test_fetch_next_network_exception_falls_back_to_oldest_cached_clip(tmp_path)
     session = FakeSession()
     session.get_responses[settings.next_url] = [requests.ConnectionError("offline")]
     player = Player(settings, session=session)
-    player.cache.store("cached1", b"data")
+    player.cache.store("cached1", _wav_bytes())
 
     clip = player.fetch_next()
 
@@ -237,7 +252,7 @@ def test_fetch_next_non_2xx_falls_back_to_oldest_cached_clip(tmp_path):
     session = FakeSession()
     session.get_responses[settings.next_url] = [FakeResponse(500)]
     player = Player(settings, session=session)
-    player.cache.store("cached1", b"data")
+    player.cache.store("cached1", _wav_bytes())
 
     clip = player.fetch_next()
 
@@ -254,7 +269,7 @@ def test_fetch_next_partial_download_falls_back_and_leaves_no_truncated_file(tmp
         FakeResponse(200, chunks=[b"partial"], iter_exc=requests.ConnectionError("dropped"))
     ]
     player = Player(settings, session=session)
-    player.cache.store("cached1", b"data")
+    player.cache.store("cached1", _wav_bytes())
 
     clip = player.fetch_next()
 
@@ -268,8 +283,8 @@ def test_offline_fallback_rotates_across_consecutive_calls(tmp_path):
     session = FakeSession()
     session.get_responses[settings.next_url] = [FakeResponse(500), FakeResponse(500)]
     player = Player(settings, session=session)
-    player.cache.store("a", b"data")
-    player.cache.store("b", b"data")
+    player.cache.store("a", _wav_bytes())
+    player.cache.store("b", _wav_bytes())
     os.utime(player.cache.path_for("a"), (BASE_MTIME, BASE_MTIME))
     os.utime(player.cache.path_for("b"), (BASE_MTIME + 1, BASE_MTIME + 1))
 
@@ -295,7 +310,7 @@ def test_offline_fallback_clip_has_id_none(tmp_path):
     session = FakeSession()
     session.get_responses[settings.next_url] = [FakeResponse(500)]
     player = Player(settings, session=session)
-    player.cache.store("cached1", b"data")
+    player.cache.store("cached1", _wav_bytes())
 
     clip = player.fetch_next()
 
@@ -519,7 +534,7 @@ def test_play_latest_demo_path_still_works_unchanged(tmp_path):
 def _wav(cache_dir: Path, rec_id: str, mtime_offset: int = 0) -> Path:
     cache_dir.mkdir(parents=True, exist_ok=True)
     path = cache_dir / f"{rec_id}.wav"
-    path.write_bytes(b"RIFF....WAVEcached")
+    path.write_bytes(_wav_bytes())
     os.utime(path, (BASE_MTIME + mtime_offset, BASE_MTIME + mtime_offset))
     return path
 
@@ -589,7 +604,9 @@ def test_successful_fetch_clears_the_offline_memo(tmp_path):
     s = _settings(tmp_path, offline_memo_seconds=30.0)
     session = FakeSession()
     session.get_responses[s.next_url] = [FakeResponse(200, json_data={"id": "abc"})]
-    session.get_responses[f"{s.recordings_url}/abc/audio"] = [FakeResponse(200, chunks=[b"d"])]
+    session.get_responses[f"{s.recordings_url}/abc/audio"] = [
+        FakeResponse(200, chunks=[_wav_bytes()])
+    ]
     player = Player(s, session=session)
     player._offline_until = 0.0
     player.fetch_next()
@@ -632,3 +649,40 @@ def test_offline_fallback_cycles_through_every_cached_clip(tmp_path):
     served = [player.fetch_next().path.stem for _ in range(3)]
 
     assert sorted(served) == ["one", "three", "two"]
+
+
+def test_download_of_a_non_wav_body_falls_back_and_caches_nothing(tmp_path):
+    # The captive-portal case: 200 OK, but the body is a sign-in page, not audio.
+    # Serving that would hand the kid silence, so it must never enter the cache.
+    s = _settings(tmp_path, offline_memo_seconds=30.0)
+    _wav(s.cache_dir, "cached1", 0)
+    session = FakeSession()
+    session.get_responses[s.next_url] = [FakeResponse(200, json_data={"id": "abc"})]
+    session.get_responses[f"{s.recordings_url}/abc/audio"] = [
+        FakeResponse(200, chunks=[b"<html>Sign in to WiFi</html>"])
+    ]
+    player = Player(s, session=session)
+
+    clip = player.fetch_next()
+
+    assert clip is not None
+    assert clip.id is None  # fell back to cache, so no receipt is owed
+    assert clip.path.stem == "cached1"
+    assert not player.cache.has("abc")
+
+
+def test_a_lying_network_is_memoed_so_junk_is_not_re_downloaded(tmp_path):
+    # A portal that intercepts every request would otherwise be re-fetched on each tap.
+    s = _settings(tmp_path, offline_memo_seconds=30.0)
+    _wav(s.cache_dir, "cached1", 0)
+    session = FakeSession()
+    session.get_responses[s.next_url] = [FakeResponse(200, json_data={"id": "abc"})]
+    session.get_responses[f"{s.recordings_url}/abc/audio"] = [
+        FakeResponse(200, chunks=[b"<html>Sign in to WiFi</html>"])
+    ]
+    player = Player(s, session=session)
+
+    player.fetch_next()
+    player.fetch_next()  # no queued responses left: a network call would AssertionError
+
+    assert len([c for c in session.calls if c["url"].endswith("/audio")]) == 1

@@ -75,7 +75,13 @@ is M3 — the Telegram bot.
 - Found while measuring: the offline fallback claimed to rotate but ping-ponged
   between the two oldest clips, because serving a clip never advanced its LRU
   position. Now touches on serve; verified it cycles all four cached clips.
-- Suites after the fix: 74 server / 100 client.
+- Post-M2 hardening: the play cache now validates that a downloaded body parses as a
+  WAV before committing it, sweeps unplayable entries at startup, and skips them in
+  `oldest()`. Prompted by stub files polluting the dev cache during the timeout work,
+  but the real-world case is a captive portal answering 200 with a sign-in page: that
+  would have been cached as `{id}.wav` and played back as silence. A rejected download
+  also marks the network unreachable, so the junk isn't re-fetched on every press.
+- Suites after the fix: 74 server / 107 client.
 - Next: M3 — the Telegram bot.
 
 ### 2026-08-12 (M1)

@@ -15,7 +15,7 @@ from pathlib import Path
 
 import requests
 
-from banter_client.cache import PlayCache
+from banter_client.cache import CorruptAudioError, PlayCache
 from banter_client.config import ClientSettings
 
 log = logging.getLogger("banter.player")
@@ -147,6 +147,13 @@ class Player:
                 log.warning("event=play_fetch_error id=%s status=%d", rec_id, resp.status_code)
                 return self._offline_fallback()
             path = self.cache.store(rec_id, resp.iter_content(chunk_size=8192))
+        except CorruptAudioError:
+            # 200 but the body isn't audio — a captive portal or proxy intercepting us.
+            # Memo it: the network is lying about being usable, and re-downloading the
+            # same junk on every button press helps nobody.
+            log.warning("event=play_corrupt_download id=%s", rec_id)
+            self._mark_offline()
+            return self._offline_fallback()
         except requests.RequestException as exc:
             # Must precede any OSError handling — see note in fetch_next().
             log.warning("event=play_fetch_error id=%s error=%s", rec_id, exc.__class__.__name__)

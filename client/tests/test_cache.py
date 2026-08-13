@@ -9,12 +9,28 @@ call `_evict()` directly -- the same "reach into the private method" style the
 uploader suite already uses for deterministic control.
 """
 
+import io
 import os
+import wave
 from pathlib import Path
 
-from banter_client.cache import PlayCache
+import pytest
+
+from banter_client.cache import CorruptAudioError, PlayCache
 
 BASE_MTIME = 1_700_000_000
+
+
+def _wav_bytes(seconds: float = 0.05, rate: int = 16000) -> bytes:
+    """Real mono 16-bit WAV bytes. The cache rejects anything `wave` can't parse, so
+    fixtures have to be actual audio rather than a b"data" placeholder."""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(rate)
+        wf.writeframes(b"\x00\x00" * int(seconds * rate))
+    return buf.getvalue()
 
 
 def _cache_with_entries(tmp_path: Path, ids: list[str], *, max_entries: int = 10) -> PlayCache:
@@ -22,7 +38,7 @@ def _cache_with_entries(tmp_path: Path, ids: list[str], *, max_entries: int = 10
     the order given (ids[0] is oldest)."""
     cache = PlayCache(tmp_path / "cache", max_entries=max_entries)
     for i, rec_id in enumerate(ids):
-        cache.store(rec_id, f"data-{rec_id}".encode())
+        cache.store(rec_id, _wav_bytes())
         os.utime(cache.path_for(rec_id), (BASE_MTIME + i, BASE_MTIME + i))
     return cache
 
@@ -31,27 +47,31 @@ def _cache_with_entries(tmp_path: Path, ids: list[str], *, max_entries: int = 10
 def test_store_bytes_then_has_and_path_for_round_trip(tmp_path):
     cache = PlayCache(tmp_path / "cache", max_entries=5)
 
-    path = cache.store("abc", b"hello world")
+    wav = _wav_bytes()
+
+    path = cache.store("abc", wav)
 
     assert cache.has("abc")
     assert cache.path_for("abc") == path
-    assert path.read_bytes() == b"hello world"
+    assert path.read_bytes() == wav
 
 
 def test_store_chunked_iterable_round_trips_exact_bytes(tmp_path):
     cache = PlayCache(tmp_path / "cache", max_entries=5)
-    chunks = [b"hel", b"lo ", b"world"]
+    wav = _wav_bytes()
+    # Split mid-file so reassembly, not just passthrough, is what's being asserted.
+    chunks = [wav[:20], wav[20:60], wav[60:]]
 
     path = cache.store("abc", iter(chunks))
 
-    assert path.read_bytes() == b"hello world"
+    assert path.read_bytes() == wav
 
 
 # ------------------------------------------------------------------------- atomicity
 def test_store_leaves_no_tmp_file_behind(tmp_path):
     cache = PlayCache(tmp_path / "cache", max_entries=5)
 
-    cache.store("abc", b"data")
+    cache.store("abc", _wav_bytes())
 
     assert list(cache.cache_dir.glob("*.tmp")) == []
 
@@ -169,12 +189,70 @@ def test_store_itself_triggers_eviction_at_the_cap(tmp_path):
     """
     cache = PlayCache(tmp_path / "cache", max_entries=2)
     for i, rec_id in enumerate(["old", "mid"]):
-        cache.store(rec_id, b"x")
+        cache.store(rec_id, _wav_bytes())
         os.utime(cache.path_for(rec_id), (BASE_MTIME + i, BASE_MTIME + i))
 
-    cache.store("new", b"x")  # third entry with a cap of 2 -> "old" must go
+    cache.store("new", _wav_bytes())  # third entry with a cap of 2 -> "old" must go
 
     assert not cache.has("old")
     assert cache.has("mid")
     assert cache.has("new")
     assert len(cache.entries()) == 2
+
+
+# -------------------------------------------------------------- corrupt-entry guard
+# The failure this guards against is a captive portal answering 200 with an HTML body:
+# it has no RIFF magic at all, and a truncated WAV has magic but no usable chunks.
+HTML_BODY = b"<html><body>Sign in to WiFi</body></html>"
+TRUNCATED_WAV = b"RIFF....WAVEcached"
+
+
+def test_store_rejects_a_non_wav_body(tmp_path):
+    cache = PlayCache(tmp_path / "cache", max_entries=5)
+
+    with pytest.raises(CorruptAudioError):
+        cache.store("abc", HTML_BODY)
+
+    assert not cache.has("abc")
+    assert list(cache.cache_dir.glob("*")) == []  # no entry, no leftover tmp
+
+
+def test_store_rejects_a_wav_header_with_no_audio(tmp_path):
+    cache = PlayCache(tmp_path / "cache", max_entries=5)
+
+    with pytest.raises(CorruptAudioError):
+        cache.store("abc", TRUNCATED_WAV)
+
+    assert not cache.has("abc")
+
+
+def test_store_rejection_leaves_an_existing_good_entry_alone(tmp_path):
+    cache = PlayCache(tmp_path / "cache", max_entries=5)
+    cache.store("good", _wav_bytes())
+
+    with pytest.raises(CorruptAudioError):
+        cache.store("bad", HTML_BODY)
+
+    assert cache.has("good")
+
+
+def test_construction_sweeps_a_corrupt_entry(tmp_path):
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir(parents=True)
+    (cache_dir / "junk.wav").write_bytes(TRUNCATED_WAV)
+    (cache_dir / "good.wav").write_bytes(_wav_bytes())
+
+    cache = PlayCache(cache_dir, max_entries=5)
+
+    assert not cache.has("junk")
+    assert cache.has("good")
+
+
+def test_oldest_skips_a_corrupt_entry_that_appears_after_startup(tmp_path):
+    cache = _cache_with_entries(tmp_path, ["good"])
+    # Written after construction, so the startup sweep never saw it.
+    corrupt = cache.cache_dir / "junk.wav"
+    corrupt.write_bytes(TRUNCATED_WAV)
+    os.utime(corrupt, (BASE_MTIME - 100, BASE_MTIME - 100))  # oldest, so it'd win
+
+    assert cache.oldest() == cache.path_for("good")
