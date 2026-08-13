@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app import db
+from app.api import recordings
 from app.config import Settings, get_settings
 
 log = logging.getLogger("banter")
@@ -46,7 +47,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def healthz() -> dict[str, bool]:
         return {"ok": True}
 
-    # M1: app.include_router(recordings.router)
+    app.include_router(recordings.router)
     # M4: app.include_router(ui.router)
     return app
 
