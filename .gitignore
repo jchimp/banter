@@ -14,5 +14,4 @@ data/
 *.db-shm
 banter-queue/
 banter-cache/
-
-banter_client/devdata/**
+client/devdata/
