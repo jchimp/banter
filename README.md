@@ -151,6 +151,7 @@ tap of an outage pays a timeout — the rest are instant.
 ```bash
 cd server
 cp .env.example .env          # set API_KEY:  openssl rand -hex 24
+                              # and the TELEGRAM_* vars (see below) to enable the bot
 uv sync
 DATA_DIR=./data uv run uvicorn app.main:app --reload --port 8080
 curl localhost:8080/healthz   # {"ok":true}
@@ -166,6 +167,28 @@ docker compose up -d --build
 curl localhost:8080/healthz
 ```
 Audio and the SQLite file live in `./data` on the host (mounted at `/data`).
+
+## Telegram bot
+The bot is a long-polling background task inside the server's lifespan — no webhook,
+no public URL. A blank `TELEGRAM_BOT_TOKEN` disables it entirely; the rest of the
+server runs as normal.
+
+1. Message [@BotFather](https://t.me/BotFather), `/newbot`, copy the token into
+   `TELEGRAM_BOT_TOKEN`.
+2. Have each parent send the bot any message, then read the chat ids from
+   `https://api.telegram.org/bot<TOKEN>/getUpdates` and set `TELEGRAM_CHAT_MOM` /
+   `TELEGRAM_CHAT_DAD`. Leave one blank for a single-parent setup.
+3. `docker compose up -d --build`. The image already carries ffmpeg.
+
+Only those two chat ids are served. Anything from anywhere else is dropped with no
+reply and no database write.
+
+| Direction | Behaviour |
+|---|---|
+| Kid records | Both parents get the joke as a voice message with a timestamp/duration caption, within ~10 s |
+| Parent sends a voice note | Stored as `source=mom\|dad`, `origin=telegram`; the OGG is kept alongside the transcoded 16 kHz WAV; BTN2 plays it next (tier 1) |
+| `/joke [n]` | 1–5 random kid recordings (default 3). Doesn't count as a play on the box |
+| `/stats` | Counts, total duration and last activity per source |
 
 ## Client — on the Pi
 ```bash
@@ -214,6 +237,10 @@ Plain SQL in `server/migrations/NNN_name.sql`, applied on startup and tracked in
 `schema_version`. **Write them idempotently** (`IF NOT EXISTS`) — `executescript()`
 commits implicitly, so a file can't be wrapped in one transaction and may replay
 after a mid-file crash. Details in `app/db.py`.
+
+`003_parent_notifications.sql` is the one exception: SQLite has no
+`ALTER TABLE ... ADD COLUMN IF NOT EXISTS`. If it ever half-applies, drop the
+partially-added column by hand and let it rerun.
 
 ## Next
 M3 — the Telegram bot (outbound notifications, inbound voice notes, `/joke`,
