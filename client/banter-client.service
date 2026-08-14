@@ -11,8 +11,14 @@ EnvironmentFile=/home/pi/banter/client/.env
 ExecStart=/home/pi/.local/bin/uv run --no-dev banter-client
 Restart=on-failure
 RestartSec=3
+# __main__.py handles SIGTERM and shuts the uploader thread down within a few
+# seconds (thread join timeout=5), so a short stop timeout is safe and keeps a
+# restart snappy instead of waiting out systemd's 90s default.
+TimeoutStopSec=10
 StandardOutput=journal
 StandardError=journal
+# No ProtectSystem=strict / PrivateDevices=yes here on purpose: this unit needs
+# /dev/gpiochip*, /dev/snd/*, and /dev/spidev* for buttons, audio, and the ring.
 
 [Install]
 WantedBy=multi-user.target

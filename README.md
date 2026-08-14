@@ -7,8 +7,9 @@ them on Telegram and send jokes back as voice notes. The box plays them.
 Docs: [`PRD.md`](PRD.md) (what) · [`ROADMAP.md`](ROADMAP.md) (order) ·
 [`CLAUDE.md`](CLAUDE.md) (how) · [`PARTS.md`](PARTS.md) · [`wiring.svg`](wiring.svg)
 
-**Status: M0 complete** — skeleton, config, migrations, health check, test harness.
-Features start at M1.
+**Status: M1 complete** — the record loop works end-to-end: kid holds BTN1 (or the
+keyboard sim), the WAV lands in the client's on-disk queue, and the uploader delivers
+it to `POST /api/recordings` with retry. No playback, no Telegram, no web UI yet.
 
 ```
    ┌──────── kidbox (Pi Zero 2 W) ────────┐        ┌─── home server (Docker) ───┐
@@ -61,6 +62,44 @@ levels, real NeoPixel animations, and speaker volume. Everything else — the qu
 retry logic, the selection algorithm, the Telegram bot, the web UI — is fully
 developable now.
 
+## Try it: the M1 record loop
+Run the server and a dev-profile client against each other on one machine — no Pi
+needed.
+
+```bash
+# terminal 1: server
+cd server
+cp .env.example .env          # set API_KEY, e.g. openssl rand -hex 24
+uv sync
+DATA_DIR=./data uv run uvicorn app.main:app --reload --port 8080
+
+# terminal 2: client, dev profile
+cd client
+cp .env.dev.example .env      # set BANTER_API_KEY to match the server's
+uv sync --extra dev-audio
+uv run banter-client
+#   [r]+Enter to start recording, [r]+Enter again to stop and enqueue; ctrl-c to quit
+```
+
+Speak a joke, then press `r` again. The client writes a WAV to `BANTER_QUEUE_DIR`
+(`./devdata/queue` by default), the uploader thread picks it up immediately, and
+within a request or two you should see:
+- a new row in the server's `recordings` table, `source=kid origin=kidbox`
+- a playable WAV under `server/data/audio/kid/YYYYMM/{id}.wav`
+- the sidecar and WAV gone from `BANTER_QUEUE_DIR` (uploader deleted them on the 2xx)
+
+Kill the server mid-recording, record a couple more jokes, then restart the server —
+the client keeps retrying with backoff and they all arrive without touching the
+client again.
+
+**Queue durability.** A recording lives in `BANTER_QUEUE_DIR` (as `{id}.wav` +
+`{id}.json`) from the moment it's captured until the server returns a 2xx; nothing in
+the client deletes it before then. The queue is plain files, so it survives a client
+restart or a Pi reboot — `recover()` re-enqueues anything left over on startup. An
+upload that fails with a permanent error (bad API key, malformed request) is moved
+into `BANTER_QUEUE_DIR/rejected/` instead of retried forever, and is never deleted —
+only `queue.done()`, called after a 2xx, removes a file.
+
 ## Server — local dev
 ```bash
 cd server
@@ -90,7 +129,7 @@ cd ~/banter/client
 cp .env.example .env          # set BANTER_API_URL + BANTER_API_KEY
 arecord -l && aplay -l        # fill in BANTER_ALSA_CAPTURE / _PLAYBACK
 uv sync --extra hardware      # gpiozero + neopixel; omit --extra off-hardware
-uv run banter-client          # M0: prints config, pings the server, exits
+uv run banter-client          # hold BTN1 to record; runs until SIGINT/SIGTERM
 
 sudo cp banter-client.service /etc/systemd/system/
 sudo systemctl enable --now banter-client
@@ -106,6 +145,18 @@ core_freq_min=500
 ```
 Codec Zero setup follows the official Raspberry Pi HAT instructions.
 
+## API
+Implemented so far (full contract in `PRD.md` §5). All `/api/*` require header
+`X-API-Key`. JSON errors: `{"detail": "..."}`.
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/recordings` | multipart: `id`, `audio`, `source`, `device_id`, `recorded_at`, `duration_ms` → `201 {id, status}` created, `200 {id, status}` duplicate |
+| GET | `/healthz` | `{"ok": true}` — no auth |
+
+`id` is client-generated; a repeat upload of the same `id` is a no-op 200, not a new
+row, which is what makes the client's retry-on-failure safe.
+
 ## Migrations
 Plain SQL in `server/migrations/NNN_name.sql`, applied on startup and tracked in
 `schema_version`. **Write them idempotently** (`IF NOT EXISTS`) — `executescript()`
@@ -113,4 +164,4 @@ commits implicitly, so a file can't be wrapped in one transaction and may replay
 after a mid-file crash. Details in `app/db.py`.
 
 ## Next
-M1 — the record loop. See `ROADMAP.md`.
+M2 — the playback loop (`select_next()`, BTN2, local play cache). See `ROADMAP.md`.

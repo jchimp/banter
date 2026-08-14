@@ -1,45 +1,94 @@
-"""Entry point. M0: prove config loads and the server is reachable, then exit.
+"""Entry point: buttons -> recorder -> queue -> uploader (M1). Player lands in M2.
 
-M1 replaces the body with the real loop: buttons -> recorder -> queue -> uploader,
-and M2 adds the player. Kept deliberately thin so wiring stays visible.
+Kept deliberately thin so the wiring stays visible: build the queue, recover anything
+left from a prior run (PRD FR-5), build the uploader and controller, wire buttons
+through the hardware seam (`backends/factory.py` — never `gpiozero` directly), then
+idle until SIGINT/SIGTERM.
 """
 
 import logging
+import signal
 import sys
+import threading
+from types import FrameType
 
-import requests
-
-from banter_client.config import get_settings
-from banter_client.state import State, StateMachine
+from banter_client.backends.base import ButtonCallbacks
+from banter_client.backends.factory import describe, make_buttons
+from banter_client.config import ClientSettings, get_settings
+from banter_client.controller import RecordController
+from banter_client.queue import RecordingMeta, RecordingQueue
+from banter_client.uploader import Uploader
 
 log = logging.getLogger("banter.client")
 
 
+class App:
+    """Owns the wired-together components and their shutdown order."""
+
+    def __init__(self, settings: ClientSettings) -> None:
+        self.s = settings
+        self.queue = RecordingQueue(settings.queue_dir, device_id=settings.device_id)
+        self.controller = RecordController(settings, on_recorded=self._on_recorded)
+        # Uploader and controller share one ring instance so "recording" / "uploading"
+        # / "queued" feedback don't fight each other over the same NeoPixels.
+        self.uploader = Uploader(settings, self.queue, ring=self.controller.ring)
+        self.buttons = make_buttons(
+            settings,
+            ButtonCallbacks(
+                on_record_press=self.controller.start_record,
+                on_record_release=self.controller.stop_record,
+                on_play_press=lambda: None,  # play lands in M2
+                on_quit=self._shutdown_requested,
+            ),
+        )
+        self._done = threading.Event()
+
+    def _on_recorded(self, meta: RecordingMeta) -> None:
+        """Hook from `RecordController`: persist to the queue, then nudge the uploader.
+
+        Enqueue-then-wake (not the reverse) so the uploader never wakes to find the
+        sidecar still missing.
+        """
+        self.queue.enqueue(meta)
+        self.uploader.wake()
+
+    def _shutdown_requested(self, *_: object) -> None:
+        self._done.set()
+
+    def run(self) -> int:
+        recovered = self.queue.recover()
+        log.info(
+            "event=startup device=%s server=%s %s queue_depth=%d recovered=%d",
+            self.s.device_id,
+            self.s.api_url,
+            describe(self.s),
+            self.queue.depth(),
+            recovered,
+        )
+
+        self.uploader.start()
+        self.buttons.start()
+
+        signal.signal(signal.SIGINT, self._on_signal)
+        signal.signal(signal.SIGTERM, self._on_signal)
+        try:
+            self._done.wait()
+        finally:
+            log.info("event=shutdown")
+            self.buttons.close()
+            self.controller.close()
+            self.uploader.stop()
+        log.info("event=bye")
+        return 0
+
+    def _on_signal(self, signum: int, _frame: FrameType | None) -> None:
+        log.info("event=signal signum=%s", signal.Signals(signum).name)
+        self._done.set()
+
+
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(name)s | %(message)s")
-    settings = get_settings()
-    machine = StateMachine(State.IDLE)
-
-    settings.queue_dir.mkdir(parents=True, exist_ok=True)
-    settings.cache_dir.mkdir(parents=True, exist_ok=True)
-
-    log.info("device=%s server=%s", settings.device_id, settings.api_url)
-    log.info(
-        "record=GPIO%d play=GPIO%d mode=%s",
-        settings.pin_record,
-        settings.pin_play,
-        settings.button_mode,
-    )
-    log.info("state=%s queue=%s", machine.state.value, settings.queue_dir)
-
-    try:
-        resp = requests.get(f"{settings.api_url.rstrip('/')}/healthz", timeout=5)
-        log.info("server healthz: %s %s", resp.status_code, resp.text.strip())
-    except requests.RequestException as exc:
-        log.warning("server unreachable (%s) - client would queue locally", exc.__class__.__name__)
-
-    log.info("M0 skeleton OK. Button/audio wiring lands in M1.")
-    return 0
+    return App(get_settings()).run()
 
 
 if __name__ == "__main__":

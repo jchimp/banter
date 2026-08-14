@@ -12,7 +12,9 @@ from banter_client.backends.base import AudioBackend, ButtonBackend, ButtonCallb
 from banter_client.backends.factory import make_audio, make_buttons, make_ring
 from banter_client.backends.io import NullRing
 from banter_client.config import ClientSettings
+from banter_client.controller import RecordController
 from banter_client.demo import Demo
+from banter_client.queue import RecordingMeta
 from banter_client.state import State
 
 
@@ -78,7 +80,32 @@ def test_synthetic_audio_writes_a_real_wav(tmp_path):
 
 
 # --------------------------------------------------------------- full loop
+# `RecordController` is the real code path both `demo.py` and `__main__.py` share
+# (Step 5), so the loop coverage below drives it directly. One `Demo`-based test is
+# kept so `banter-demo` itself stays exercised end to end.
 def test_record_then_play_loop(sim_settings):
+    controller = RecordController(sim_settings, ring=NullRing())
+
+    controller.start_record()
+    assert controller.machine.state is State.RECORDING
+    controller.stop_record()
+    assert controller.machine.state is State.IDLE
+
+    clips = list(sim_settings.queue_dir.glob("*.wav"))
+    assert len(clips) == 1
+
+    controller.play_latest()
+    assert controller.machine.state is State.PLAYING
+    for _ in range(100):
+        if controller.machine.state is State.IDLE:
+            break
+        __import__("time").sleep(0.05)
+    assert controller.machine.state is State.IDLE
+    assert "playing" in controller.ring.states
+
+
+def test_demo_record_then_play_loop(sim_settings):
+    """`banter-demo`'s own wiring, kept covered end to end (not just via the controller)."""
     demo = Demo(sim_settings)
     demo.ring = NullRing()
 
@@ -86,18 +113,7 @@ def test_record_then_play_loop(sim_settings):
     assert demo.machine.state is State.RECORDING
     demo.stop_record()
     assert demo.machine.state is State.IDLE
-
-    clips = list(sim_settings.queue_dir.glob("*.wav"))
-    assert len(clips) == 1
-
-    demo.play_latest()
-    assert demo.machine.state is State.PLAYING
-    for _ in range(100):
-        if demo.machine.state is State.IDLE:
-            break
-        __import__("time").sleep(0.05)
-    assert demo.machine.state is State.IDLE
-    assert "playing" in demo.ring.states
+    assert list(sim_settings.queue_dir.glob("*.wav"))
 
 
 def test_too_short_recording_is_discarded(tmp_path):
@@ -108,26 +124,36 @@ def test_too_short_recording_is_discarded(tmp_path):
         min_seconds=99.0,  # nothing can clear this
         _env_file=None,
     )
-    demo = Demo(settings)
-    demo.ring = NullRing()
-    demo.start_record()
-    demo.stop_record()
+    controller = RecordController(settings, ring=NullRing())
+    controller.start_record()
+    controller.stop_record()
     assert list(settings.queue_dir.glob("*.wav")) == []
-    assert "discarded" in demo.ring.flashes
+    assert "discarded" in controller.ring.flashes
 
 
 def test_play_ignored_while_recording(sim_settings):
-    demo = Demo(sim_settings)
-    demo.ring = NullRing()
-    demo.start_record()
-    demo.play_latest()  # FR-10
-    assert demo.machine.state is State.RECORDING
-    demo.stop_record()
+    controller = RecordController(sim_settings, ring=NullRing())
+    controller.start_record()
+    controller.play_latest()  # FR-10
+    assert controller.machine.state is State.RECORDING
+    controller.stop_record()
 
 
 def test_play_with_empty_queue_recovers(sim_settings):
-    demo = Demo(sim_settings)
-    demo.ring = NullRing()
-    demo.play_latest()
-    assert demo.machine.state is State.IDLE
-    assert "error" in demo.ring.flashes
+    controller = RecordController(sim_settings, ring=NullRing())
+    controller.play_latest()
+    assert controller.machine.state is State.IDLE
+    assert "error" in controller.ring.flashes
+
+
+def test_on_recorded_fires_once_with_matching_id(sim_settings):
+    calls: list[RecordingMeta] = []
+    controller = RecordController(sim_settings, ring=NullRing(), on_recorded=calls.append)
+
+    controller.start_record()
+    controller.stop_record()
+
+    assert len(calls) == 1
+    meta = calls[0]
+    [wav] = sim_settings.queue_dir.glob("*.wav")
+    assert meta.id == wav.stem
