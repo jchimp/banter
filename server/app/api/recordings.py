@@ -1,5 +1,9 @@
 """POST /api/recordings — multipart upload from kidbox (PRD §5).
 
+Also the M2 playback routes: `GET /next` (selection), `GET /{id}/audio` (stream),
+`POST /{id}/played` (receipt). Those three are thin adapters over `app.selection`
+and `app.store` — no tier/cooldown logic here (FR-14: it lives in one place).
+
 Idempotent on the client-generated `id`: a retried upload with the same id is
 detected before the body is even read, so retries are cheap and never rewrite a
 stored file (CLAUDE.md: "the client's queue is the source of truth for unsent
@@ -9,10 +13,12 @@ audio... client generates the id; server upserts on it").
 import logging
 import os
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, Response
+from pydantic import BaseModel
 
 from app import store
 from app.api.deps import get_settings_dep, require_api_key
@@ -26,6 +32,7 @@ from app.audio import (
 )
 from app.config import Settings
 from app.db import session, transaction
+from app.selection import DeviceHistory, SelectionConfig, select_next
 
 log = logging.getLogger("banter.api")
 
@@ -56,7 +63,10 @@ async def _stream_to_file(upload: UploadFile, dest: Path, max_bytes: int) -> Non
 
 @router.post("/recordings", dependencies=[Depends(require_api_key)])
 async def upload_recording(
-    id: str = Form(...),
+    # `default=""` (not `Form(...)`) so a missing/empty `id` reaches the handler
+    # instead of short-circuiting with FastAPI's 422 — the kidbox shouldn't have
+    # to distinguish "missing" from "malformed", both are just a 400 here.
+    id: str = Form(default=""),
     audio: UploadFile = File(...),
     source: str = Form(...),
     device_id: str = Form(...),
@@ -143,3 +153,130 @@ async def upload_recording(
     # Lost a race with a concurrent identical upload: file is already in place, leave it.
     log.info("upload_race_duplicate | api | id=%s", id)
     return JSONResponse(status_code=200, content={"id": id, "status": "duplicate"})
+
+
+@router.get("/recordings/next", dependencies=[Depends(require_api_key)])
+async def next_recording(
+    device_id: str = Query(...),
+    settings: Settings = Depends(get_settings_dep),
+) -> Response:
+    """Pick the next recording for `device_id` to play (PRD 3.3, FR-14).
+
+    A thin adapter: build `Candidate`/`DeviceHistory` from the store, hand them to
+    the pure `select_next`, map the result back to JSON. No tier reasoning or
+    cooldown arithmetic lives here — that's the whole point of `app.selection`.
+    """
+    with session(settings.db_path) as conn:
+        candidates = store.selectable_candidates(conn, device_id)
+        history = DeviceHistory(last_recording_id=store.last_played_recording_id(conn, device_id))
+
+        cfg = SelectionConfig(
+            parent_cooldown_hours=settings.parent_cooldown_hours,
+            avoid_immediate_repeat=settings.avoid_immediate_repeat,
+        )
+        chosen = select_next(candidates, history, datetime.now(UTC), cfg)
+
+        if chosen is None:
+            log.info("next_empty | api | device_id=%s", device_id)
+            return Response(status_code=204)
+
+        # `Candidate` carries only what selection needs; `duration_ms` isn't part of
+        # that pure-function shape, so pull the full row for the response payload.
+        row = store.get_recording(conn, chosen.id)
+
+    log.info(
+        "next_chosen | api | device_id=%s id=%s source=%s", device_id, chosen.id, chosen.source
+    )
+    return JSONResponse(
+        status_code=200,
+        content={
+            "id": chosen.id,
+            "source": chosen.source,
+            "duration_ms": row["duration_ms"],
+            "created_at": chosen.created_at.isoformat().replace("+00:00", "Z"),
+            "play_count": chosen.play_count,
+            "audio_url": f"/api/recordings/{chosen.id}/audio",
+        },
+    )
+
+
+@router.get("/recordings/{id}/audio", dependencies=[Depends(require_api_key)])
+async def get_recording_audio(
+    id: str,
+    settings: Settings = Depends(get_settings_dep),
+) -> FileResponse:
+    """Stream a recording's WAV file.
+
+    404 on an unknown or soft-deleted id (`store.get_playable`). The row's `path`
+    is caller-controlled data (it came from `insert_recording`, not user input at
+    request time, but treat it as untrusted anyway): resolve it against
+    `settings.audio_dir` and refuse to serve anything that resolves outside that
+    tree, so a malformed/hand-edited row can't be used to read arbitrary files.
+    """
+    with session(settings.db_path) as conn:
+        row = store.get_playable(conn, id)
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="recording not found")
+
+    audio_dir = settings.audio_dir.resolve()
+    resolved = (settings.audio_dir / row["path"]).resolve()
+    if not resolved.is_relative_to(audio_dir):
+        log.error("audio_path_escape | api | id=%s path=%s", id, row["path"])
+        raise HTTPException(status_code=404, detail="recording not found")
+
+    if not resolved.is_file():
+        log.error("audio_missing_on_disk | api | id=%s path=%s", id, row["path"])
+        raise HTTPException(status_code=404, detail="recording not found")
+
+    return FileResponse(resolved, media_type="audio/wav")
+
+
+class PlayedRequest(BaseModel):
+    """Body for `POST /api/recordings/{id}/played`."""
+
+    device_id: str
+    played_at: str | None = None
+
+
+@router.post("/recordings/{id}/played", dependencies=[Depends(require_api_key)])
+async def mark_played(
+    id: str,
+    body: PlayedRequest,
+    settings: Settings = Depends(get_settings_dep),
+) -> JSONResponse:
+    """Record a play receipt for `id` on `body.device_id`.
+
+    404 only when `id` is genuinely unknown — a soft-deleted recording still
+    records the play (it may have been deleted after the kid heard it, per the
+    task spec). `played_at` defaults to now server-side; a caller-supplied value
+    is validated as ISO8601 (400 on garbage) so a retried receipt can resend the
+    exact same timestamp and be deduped by `store.record_play`.
+    """
+    if body.played_at is not None:
+        try:
+            parse_iso8601(body.played_at)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=f"invalid played_at: {exc}") from exc
+        played_at = body.played_at
+    else:
+        played_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+    with session(settings.db_path) as conn:
+        existing = store.get_recording(conn, id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail="recording not found")
+
+        with transaction(conn):
+            store.record_play(
+                conn,
+                recording_id=id,
+                device_id=body.device_id,
+                played_at=played_at,
+            )
+        row = store.get_recording(conn, id)
+
+    log.info(
+        "played_recorded | api | id=%s device_id=%s played_at=%s", id, body.device_id, played_at
+    )
+    return JSONResponse(status_code=200, content={"id": id, "play_count": row["play_count"]})

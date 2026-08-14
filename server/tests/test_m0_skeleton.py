@@ -18,7 +18,11 @@ def test_migrations_create_all_tables(client, settings):
 def test_migrations_are_idempotent(settings):
     first = db.migrate(settings.db_path)
     second = db.migrate(settings.db_path)
-    assert first == [1]
+    # Version-agnostic on purpose: the claim is "applies every pending migration
+    # once, then nothing". Hardcoding the list makes every new migration break an
+    # unrelated M0 test.
+    assert first == sorted(first)
+    assert first[0] == 1
     assert second == []
 
 

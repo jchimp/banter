@@ -166,15 +166,28 @@ def test_invalid_id_400(client, post_recording, bad_id):
     assert resp.status_code == 400
 
 
-def test_empty_id_is_422_not_400(client, post_recording):
-    """Documents a divergence from spec, not a fix: an empty multipart form value for
-    `id: str = Form(...)` never reaches `upload_recording`'s `_ID_RE` check — FastAPI's
-    own required-field validation treats "" as absent and short-circuits with 422
-    before the handler runs. The route's regex would correctly 400 it if it got there.
-    Not in scope to change per the task's file whitelist; left here as a known gap.
+def test_empty_id_is_400(client, post_recording):
+    """`id: str = Form(default="")` lets an empty value reach the handler instead of
+    short-circuiting with FastAPI's 422, so it falls through to the same `_ID_RE`
+    400 as any other malformed id — the kidbox doesn't have to distinguish the two.
     """
     resp = post_recording(client, id="")
-    assert resp.status_code == 422
+    assert resp.status_code == 400
+
+
+def test_missing_id_field_is_400(client, settings, wav_bytes):
+    """A form POST that omits the `id` field entirely (not just empty) still 400s,
+    not FastAPI's default 422 — same reasoning as `test_empty_id_is_400`.
+    """
+    data = {
+        "source": "kid",
+        "device_id": "kidbox-01",
+        "recorded_at": "2026-08-12T10:30:00Z",
+        "duration_ms": "1000",
+    }
+    files = {"audio": ("rec.wav", wav_bytes(), "audio/wav")}
+    resp = client.post("/api/recordings", data=data, files=files, headers={"X-API-Key": "test-key"})
+    assert resp.status_code == 400
 
 
 def test_malformed_recorded_at_400(client, post_recording):

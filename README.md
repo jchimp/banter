@@ -7,9 +7,11 @@ them on Telegram and send jokes back as voice notes. The box plays them.
 Docs: [`PRD.md`](PRD.md) (what) · [`ROADMAP.md`](ROADMAP.md) (order) ·
 [`CLAUDE.md`](CLAUDE.md) (how) · [`PARTS.md`](PARTS.md) · [`wiring.svg`](wiring.svg)
 
-**Status: M1 complete** — the record loop works end-to-end: kid holds BTN1 (or the
-keyboard sim), the WAV lands in the client's on-disk queue, and the uploader delivers
-it to `POST /api/recordings` with retry. No playback, no Telegram, no web UI yet.
+**Status: M1 + M2 complete** — the record loop works end-to-end (kid holds BTN1, the
+WAV lands in the client's on-disk queue, the uploader delivers it to
+`POST /api/recordings` with retry) and so does playback: BTN2 fetches a joke from
+`select_next()`, plays it, and posts a play receipt; offline taps fall back to a local
+cache. No Telegram, no web UI yet.
 
 ```
    ┌──────── kidbox (Pi Zero 2 W) ────────┐        ┌─── home server (Docker) ───┐
@@ -100,6 +102,51 @@ upload that fails with a permanent error (bad API key, malformed request) is mov
 into `BANTER_QUEUE_DIR/rejected/` instead of retried forever, and is never deleted —
 only `queue.done()`, called after a 2xx, removes a file.
 
+## Try it: the M2 playback loop
+Same two-terminal setup as above. Once a recording or two has been uploaded (seed a
+couple with the record loop, or a parent voice note once M3 lands), tap `p`:
+
+```bash
+# terminal 2: client, dev profile (as above)
+uv run banter-client
+#   [r]+Enter record, [p]+Enter play/stop, ctrl-c to quit
+```
+
+`p` does two round trips, not one: `GET /api/recordings/next?device_id=...` picks a
+recording (`select_next()`, tier 1 → 4 per `PRD.md` §3.3), then
+`GET /api/recordings/{id}/audio` streams the WAV, which is written into
+`BANTER_CACHE_DIR` before it plays. A `204` from `/next` means "nothing selectable
+right now" — the client does *not* fall back to the cache in that case, only on a
+network error or a non-2xx/204 status. Tapping `p` again while a clip is playing stops
+it; tapping while still fetching cancels the fetch instead of starting playback once it
+lands. After a clip finishes, the client posts a best-effort play receipt
+(`POST /api/recordings/{id}/played`) — a dropped receipt never delays or blocks audio.
+
+**Play cache / offline fallback.** `BANTER_CACHE_DIR` holds the last
+`BANTER_PLAY_CACHE_SIZE` clips actually played, oldest evicted first (LRU by mtime).
+Pull the network and tap `p` again: `Player` catches the request failure and falls back
+to the oldest cached clip instead. Each served fallback is moved to the back of the LRU,
+so repeated offline taps cycle through the whole cache rather than alternating between
+the two oldest clips. A fallback clip has no server-known id, so no play receipt is
+posted for it.
+
+**Only real audio gets cached.** `store()` parses the downloaded body as a WAV before
+committing it, so a 200 carrying something other than audio — a captive portal or proxy
+sign-in page is the realistic case on guest WiFi — is rejected rather than cached and
+later played back as silence. That also memoes the network as unreachable, so the same
+junk isn't re-fetched on every press. Entries that arrive some other way (an older
+client, a hand-copied file) are swept at startup, and `oldest()` skips anything
+unplayable so a bad entry can't wedge the offline fallback.
+
+**Failing fast when the server is down.** A stopped server doesn't always refuse
+connections — Docker keeps its port proxy bound after the container stops, so the TCP
+connect succeeds and nothing ever answers. Two settings keep BTN2 responsive in that
+case: `BANTER_NEXT_TIMEOUT` (default 3s) bounds the small `/next` and `/played` calls,
+while `BANTER_HTTP_TIMEOUT` (30s) still covers the audio download; and after any failed
+fetch the client treats the server as unreachable for `BANTER_OFFLINE_MEMO_SECONDS`
+(default 30s), skipping the network entirely and going straight to cache. Only the first
+tap of an outage pays a timeout — the rest are instant.
+
 ## Server — local dev
 ```bash
 cd server
@@ -152,10 +199,15 @@ Implemented so far (full contract in `PRD.md` §5). All `/api/*` require header
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/api/recordings` | multipart: `id`, `audio`, `source`, `device_id`, `recorded_at`, `duration_ms` → `201 {id, status}` created, `200 {id, status}` duplicate |
+| GET | `/api/recordings/next?device_id=` | `select_next()` → `200 {id, source, duration_ms, created_at, play_count, audio_url}`, or `204` if nothing selectable |
+| GET | `/api/recordings/{id}/audio` | Streams the canonical WAV; `404` on unknown or soft-deleted id |
+| POST | `/api/recordings/{id}/played` | body `{device_id, played_at?}` → `200 {id, play_count}`; idempotent on the exact `(id, device_id, played_at)` triple |
 | GET | `/healthz` | `{"ok": true}` — no auth |
 
 `id` is client-generated; a repeat upload of the same `id` is a no-op 200, not a new
-row, which is what makes the client's retry-on-failure safe.
+row, which is what makes the client's retry-on-failure safe. A missing or malformed
+`id` is a `400`, not FastAPI's default `422` — the kidbox shouldn't have to
+distinguish the two, both are just a bad request.
 
 ## Migrations
 Plain SQL in `server/migrations/NNN_name.sql`, applied on startup and tracked in
@@ -164,4 +216,5 @@ commits implicitly, so a file can't be wrapped in one transaction and may replay
 after a mid-file crash. Details in `app/db.py`.
 
 ## Next
-M2 — the playback loop (`select_next()`, BTN2, local play cache). See `ROADMAP.md`.
+M3 — the Telegram bot (outbound notifications, inbound voice notes, `/joke`,
+`/stats`). See `ROADMAP.md`.

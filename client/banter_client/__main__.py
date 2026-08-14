@@ -16,6 +16,7 @@ from banter_client.backends.base import ButtonCallbacks
 from banter_client.backends.factory import describe, make_buttons
 from banter_client.config import ClientSettings, get_settings
 from banter_client.controller import RecordController
+from banter_client.player import Player
 from banter_client.queue import RecordingMeta, RecordingQueue
 from banter_client.uploader import Uploader
 
@@ -28,7 +29,11 @@ class App:
     def __init__(self, settings: ClientSettings) -> None:
         self.s = settings
         self.queue = RecordingQueue(settings.queue_dir, device_id=settings.device_id)
-        self.controller = RecordController(settings, on_recorded=self._on_recorded)
+        # Player builds its own PlayCache from settings (cache_dir, play_cache_size).
+        self.player = Player(settings)
+        self.controller = RecordController(
+            settings, on_recorded=self._on_recorded, player=self.player
+        )
         # Uploader and controller share one ring instance so "recording" / "uploading"
         # / "queued" feedback don't fight each other over the same NeoPixels.
         self.uploader = Uploader(settings, self.queue, ring=self.controller.ring)
@@ -37,7 +42,7 @@ class App:
             ButtonCallbacks(
                 on_record_press=self.controller.start_record,
                 on_record_release=self.controller.stop_record,
-                on_play_press=lambda: None,  # play lands in M2
+                on_play_press=self.controller.play_next,
                 on_quit=self._shutdown_requested,
             ),
         )

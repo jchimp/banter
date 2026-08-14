@@ -16,7 +16,16 @@ class ClientSettings(BaseSettings):
     api_url: str = "http://homeserver.local:8080"
     api_key: str = ""
     device_id: str = "kidbox-01"
+    # Whole-request budget for an audio download: a 60s clip over weak WiFi needs room.
     http_timeout: float = 30.0
+    # ...but /next and /played are ~200 bytes. A dead server that still ACCEPTS the TCP
+    # connection (Docker leaves its port proxy bound after the container stops) hangs
+    # until the READ timeout, so BTN2 would sit silent for `http_timeout` before
+    # falling back to cache. Keep these short so the fallback is quick.
+    next_timeout: float = 3.0
+    # After a failed fetch, skip the network entirely for this long and go straight to
+    # the play cache. Makes every tap after the first one instant during an outage.
+    offline_memo_seconds: float = 30.0
 
     # --- backends (see backends/base.py) ----------------------------------
     # Pi:      alsa / gpio / neopixel

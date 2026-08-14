@@ -16,6 +16,7 @@ from pathlib import Path
 from banter_client.backends.base import AudioBackend, RingBackend
 from banter_client.backends.factory import make_audio, make_ring
 from banter_client.config import ClientSettings
+from banter_client.player import Clip, Player
 from banter_client.queue import RecordingMeta
 from banter_client.state import State, StateMachine
 
@@ -32,18 +33,26 @@ class RecordController:
         ring: RingBackend | None = None,
         machine: StateMachine | None = None,
         on_recorded: Callable[[RecordingMeta], None] | None = None,
+        player: Player | None = None,
     ) -> None:
         self.s = settings
         self.machine = machine or StateMachine()
         self.audio = audio or make_audio(settings)
         self.ring = ring or make_ring(settings)
         self.on_recorded = on_recorded
+        self.player = player
         self.current: Path | None = None
         self._watchdog: threading.Timer | None = None
         # start/stop are reachable from a button callback AND the watchdog thread.
         # StateMachine is itself locked, but the check-then-act around self.current
         # is not, so guard the whole transition.
         self._lock = threading.RLock()
+        # Bumped every time a play_next() attempt starts or is cancelled. The worker
+        # thread compares its captured value against this after the (unlocked, slow)
+        # fetch returns; a mismatch means it was cancelled or superseded, so it must
+        # drop the result instead of starting playback (Step 8 tap-during-fetch race).
+        self._play_generation = 0
+        self._play_worker: threading.Thread | None = None
         settings.queue_dir.mkdir(parents=True, exist_ok=True)
 
     # -- record --------------------------------------------------------------
@@ -141,8 +150,107 @@ class RecordController:
         self.machine.to(State.IDLE)
         self.ring.show("idle")
 
+    # -- play (server-backed, BTN2) ---------------------------------------------
+    def play_next(self) -> None:
+        """Fetch and play the next clip from the server (PRD FR-8). A tap while
+        already playing stops it (FR-9); a tap while still fetching cancels the
+        fetch instead (see the generation comment in `_fetch_and_play`)."""
+        with self._lock:
+            if self.machine.state is State.PLAYING:
+                if self.audio.is_playing:
+                    self.audio.stop_play()
+                else:
+                    # Audio hasn't started yet -- we're still waiting on
+                    # Player.fetch_next() on the worker thread. There is nothing
+                    # for the audio backend to stop, so cancel the fetch by
+                    # bumping the generation and settle the box back to IDLE
+                    # ourselves; a slow/offline fetch must not keep BTN1 locked
+                    # out for up to `http_timeout` seconds after the kid cancels.
+                    self._play_generation += 1
+                    self.machine.to(State.IDLE)
+                    self.ring.show("idle")
+                    log.info("event=play_cancelled")
+                return
+            if self.player is None:
+                # No server-backed player wired (demo.py, or a misconfigured build).
+                # Refuse BEFORE taking the PLAYING transition: failing after it would
+                # strand the box in PLAYING with no worker to ever settle it, locking
+                # out both buttons until restart.
+                log.info("event=play_ignored reason=no_player")
+                return
+            if self.machine.is_busy() or not self.machine.to(State.PLAYING):
+                log.info("event=play_ignored state=%s", self.machine.state)
+                return
+            self._play_generation += 1
+            generation = self._play_generation
+        # Player.fetch_next() does a blocking HTTP call (up to http_timeout); never
+        # run it under the button callback or self._lock, or a slow/offline server
+        # would wedge the whole box (CLAUDE.md gotcha 5 / this step's spec).
+        self._play_worker = threading.Thread(
+            target=self._fetch_and_play,
+            args=(generation,),
+            daemon=True,
+            name="banter-player",
+        )
+        self._play_worker.start()
+
+    def _fetch_and_play(self, generation: int) -> None:
+        """Worker body: resolve the next clip off-thread, then hand it to the audio
+        backend. Runs with no lock held while `fetch_next()` is in flight."""
+        try:
+            clip = self.player.fetch_next() if self.player else None
+        except Exception:
+            # Anything unexpected out of fetch_next() dies on THIS thread, so if we
+            # don't settle the machine here the box stays PLAYING forever and both
+            # buttons go dead. An unplayable joke is recoverable; a wedged box is not.
+            log.exception("event=play_fetch_crashed")
+            with self._lock:
+                if generation == self._play_generation:
+                    self.machine.to(State.IDLE)
+                    self.ring.flash("error")
+                    self.ring.show("idle")
+            return
+        with self._lock:
+            if generation != self._play_generation:
+                # Cancelled (tap-during-fetch) or superseded by a later play_next()
+                # while this fetch was in flight. Leave the clip cached -- it was
+                # already written to disk by PlayCache and is fine to play next
+                # time -- just don't start playback or touch state that a newer
+                # generation may already own.
+                log.info("event=play_cancelled")
+                return
+            if clip is None:
+                self.ring.flash("error")
+                self.machine.to(State.IDLE)
+                self.ring.show("idle")
+                return
+            log.info("event=playing id=%s cached=%s", clip.id, clip.from_cache)
+            self.ring.show("playing")
+            self.audio.play(clip.path, on_done=lambda: self._play_next_done(clip))
+
+    def _play_next_done(self, clip: Clip) -> None:
+        """AudioBackend on_done for play_next(). Always return to IDLE first so the
+        best-effort receipt POST can never delay it."""
+        with self._lock:
+            self.machine.to(State.IDLE)
+            self.ring.show("idle")
+        if clip.id is not None:
+            # Fallback clips (offline cache) have id=None and get no receipt --
+            # see Player._offline_fallback. report_played() swallows its own errors.
+            self.player.report_played(clip.id)
+
     def close(self) -> None:
         """Release backends. Safe to call more than once."""
         self._cancel_watchdog()
+        # Bump the generation first: a worker still blocked in fetch_next() past the
+        # join below would otherwise wake up and call play() on an already-closed
+        # backend. The mismatch makes it drop the clip and return instead.
+        with self._lock:
+            self._play_generation += 1
+        # Daemon thread, so a slow/offline fetch can't block process exit; a short
+        # join just gives a clean shutdown log/state in the common case where it
+        # finishes quickly. If it's still running past the timeout we just move on.
+        if self._play_worker and self._play_worker.is_alive():
+            self._play_worker.join(timeout=1.0)
         self.audio.close()
         self.ring.close()
