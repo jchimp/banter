@@ -64,8 +64,13 @@ class RecordingMeta:
         )
 
 
-def _probe_duration_ms(path: Path) -> int:
-    """Best-effort duration probe for an orphan wav found during recovery."""
+def probe_duration_ms(path: Path) -> int:
+    """Milliseconds of audio actually in `path`, or 0 if it can't be read.
+
+    Best-effort by design: used both to recover an orphan wav and to decide whether a
+    just-finished capture is worth keeping, and in neither case should an unreadable
+    file raise — 0 means "nothing here", which is the answer the caller acts on.
+    """
     try:
         with wave.open(str(path), "rb") as wf:
             rate = wf.getframerate() or 1
@@ -153,7 +158,7 @@ class RecordingQueue:
             source=self.source,
             device_id=self.device_id,
             recorded_at=recorded_at,
-            duration_ms=_probe_duration_ms(wav),
+            duration_ms=probe_duration_ms(wav),
         )
 
     def done(self, meta: RecordingMeta) -> None:

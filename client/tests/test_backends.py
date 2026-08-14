@@ -4,6 +4,7 @@ If these pass on your laptop, the loop works; only the backend swaps on the Pi.
 """
 
 import wave
+from pathlib import Path
 
 import pytest
 
@@ -128,6 +129,62 @@ def test_too_short_recording_is_discarded(tmp_path):
     controller.start_record()
     controller.stop_record()
     assert list(settings.queue_dir.glob("*.wav")) == []
+    assert "discarded" in controller.ring.flashes
+
+
+class SilentAudio:
+    """A mic that captures nothing: long hold, header-only WAV.
+
+    This is the real failure seen on the box — a busy or dead capture device leaves
+    `arecord` writing a 44-byte WAV while the wall clock happily reports a full hold.
+    """
+
+    def __init__(self) -> None:
+        self.is_recording = False
+        self.is_playing = False
+
+    def start_record(self, path: Path) -> None:
+        with wave.open(str(path), "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(16000)
+            wf.writeframes(b"")  # zero frames — a valid WAV containing no audio
+        self.is_recording = True
+
+    def stop_record(self) -> float:
+        self.is_recording = False
+        return 5.0  # the button really was held for five seconds
+
+    def play(self, path: Path, on_done=None) -> None:
+        self.is_playing = True
+
+    def stop_play(self) -> None:
+        self.is_playing = False
+
+
+def test_recording_with_no_captured_audio_is_discarded(tmp_path):
+    """A held button that captured nothing must never reach the queue.
+
+    Guarding on wall-clock duration alone let a 44-byte WAV upload, get transcoded,
+    and land on a parent's phone as an unplayable voice note.
+    """
+    settings = ClientSettings(
+        audio_backend="synthetic",
+        ring_backend="null",
+        queue_dir=tmp_path / "q",
+        min_seconds=0.8,
+        _env_file=None,
+    )
+    saved: list[object] = []
+    controller = RecordController(
+        settings, audio=SilentAudio(), ring=NullRing(), on_recorded=saved.append
+    )
+
+    controller.start_record()
+    controller.stop_record()
+
+    assert list(settings.queue_dir.glob("*.wav")) == [], "empty capture must be deleted"
+    assert saved == [], "empty capture must not be handed to the uploader"
     assert "discarded" in controller.ring.flashes
 
 

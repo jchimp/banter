@@ -17,7 +17,7 @@ from banter_client.backends.base import AudioBackend, RingBackend
 from banter_client.backends.factory import make_audio, make_ring
 from banter_client.config import ClientSettings
 from banter_client.player import Clip, Player
-from banter_client.queue import RecordingMeta
+from banter_client.queue import RecordingMeta, probe_duration_ms
 from banter_client.state import State, StateMachine
 
 log = logging.getLogger("banter.controller")
@@ -89,18 +89,32 @@ class RecordController:
         if self.machine.state is not State.RECORDING:
             return
         self._cancel_watchdog()
-        duration = self.audio.stop_record()
+        held = self.audio.stop_record()
         path, self.current = self.current, None
-        if duration < self.s.min_seconds or not (path and path.exists()):
+        # The wall clock says how long the button was held; the file says what was
+        # actually captured. Trust the file. A dead mic or a busy capture device
+        # yields a header-only WAV, and a wall-clock check waves that straight
+        # through (CLAUDE.md gotcha 3) — the empty clip then travels all the way to
+        # a parent's phone as an unplayable voice note. Every backend finishes
+        # writing before stop_record() returns, so this probe sees the final file.
+        captured = probe_duration_ms(path) / 1000 if path is not None and path.exists() else 0.0
+        if captured < self.s.min_seconds:
             if path:
                 path.unlink(missing_ok=True)
             self.ring.flash("discarded")
-            log.info("event=discarded duration=%.2f min=%.2f", duration, self.s.min_seconds)
+            # Log both: captured well under held means the mic produced nothing, which
+            # is a different problem from the kid tapping instead of holding.
+            log.info(
+                "event=discarded captured=%.2f held=%.2f min=%.2f",
+                captured,
+                held,
+                self.s.min_seconds,
+            )
         else:
-            meta = self._build_meta(path, duration)
+            meta = self._build_meta(path, captured)
             self.ring.flash("success")
             log.info(
-                "event=saved id=%s duration=%.2f bytes=%d", meta.id, duration, path.stat().st_size
+                "event=saved id=%s duration=%.2f bytes=%d", meta.id, captured, path.stat().st_size
             )
             if self.on_recorded:
                 self.on_recorded(meta)
