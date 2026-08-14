@@ -24,9 +24,17 @@ class Settings(BaseSettings):
     avoid_immediate_repeat: bool = True
 
     # --- telegram (M3) -----------------------------------------------------
+    # Empty token disables the bot entirely (the lifespan skips the task).
     telegram_bot_token: str = ""
     telegram_chat_mom: str = ""
     telegram_chat_dad: str = ""
+    # How long getUpdates holds the connection open. Telegram caps this at 50s.
+    telegram_poll_timeout_s: int = 30
+    # Notify cadence. The roadmap budget is ~10s from recording to parent's phone,
+    # so 3s of polling latency leaves room for transcode and upload.
+    telegram_notify_interval_s: float = 3.0
+    # Per-send attempts before leaving the row for the next notify pass.
+    telegram_send_retries: int = 3
 
     # --- misc --------------------------------------------------------------
     log_level: str = "INFO"
@@ -41,6 +49,14 @@ class Settings(BaseSettings):
 
     def chat_id_for(self, source: str) -> str:
         return {"mom": self.telegram_chat_mom, "dad": self.telegram_chat_dad}.get(source, "")
+
+    def configured_parent_roles(self) -> list[str]:
+        """Parent roles that actually have a chat id set.
+
+        A one-parent deployment leaves the other chat id blank; the notifier only
+        owes a delivery to the roles listed here, so `notified` can still reach 1.
+        """
+        return [role for role in ("mom", "dad") if self.chat_id_for(role)]
 
     def source_for_chat(self, chat_id: str | int) -> str | None:
         """Reverse lookup used by the bot allowlist. Unknown chats -> None (ignored)."""
