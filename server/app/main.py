@@ -8,13 +8,16 @@ there's no public URL — and is a no-op when no token is configured.
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from app import db
-from app.api import recordings
+from app.api import devices, recordings
 from app.config import Settings, get_settings
 from app.telegram.bot import run_bot
+from app.ui import routes as ui_routes
 
 log = logging.getLogger("banter")
 
@@ -58,7 +61,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"ok": True}
 
     app.include_router(recordings.router)
-    # M4: app.include_router(ui.router)
+    app.include_router(devices.router)
+    # The UI router is key-free by design (FR-25, trusted LAN): a browser <audio> tag
+    # can't send X-API-Key, so /ui/* serves audio without one. /api/* is unchanged.
+    app.include_router(ui_routes.router)
+    app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
     return app
 
 
