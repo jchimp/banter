@@ -289,6 +289,106 @@ def random_kid_recordings(conn: sqlite3.Connection, n: int) -> list[sqlite3.Row]
     ).fetchall()
 
 
+def list_recordings(
+    conn: sqlite3.Connection,
+    *,
+    source: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[sqlite3.Row]:
+    """Non-deleted recordings, newest first, for the web UI's recordings list.
+
+    Offset pagination rather than keyset: the dataset is small (a single family's
+    recordings) so the O(offset) scan cost is negligible, and plain offset/limit
+    keeps the HTMX pagination markup (page links with a fixed offset) trivial
+    compared to threading a keyset cursor through query params.
+
+    Source validation belongs to the caller, not here — this stays a plain
+    data-access function that trusts its arguments.
+    """
+    if source is not None:
+        return conn.execute(
+            """
+            SELECT * FROM recordings
+            WHERE deleted = 0 AND source = ?
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?
+            """,
+            (source, limit, offset),
+        ).fetchall()
+    return conn.execute(
+        """
+        SELECT * FROM recordings
+        WHERE deleted = 0
+        ORDER BY created_at DESC
+        LIMIT ? OFFSET ?
+        """,
+        (limit, offset),
+    ).fetchall()
+
+
+def soft_delete_recording(conn: sqlite3.Connection, rec_id: str) -> bool:
+    """Flag a recording as deleted.
+
+    Never touches the file on disk (CLAUDE.md: no hard delete, ever) — this only
+    flips the `deleted` column so the row drops out of playback/UI queries while
+    the audio stays on disk for recovery.
+
+    Returns:
+        True if a row was flipped, False if `rec_id` is unknown or already deleted.
+    """
+    cursor = conn.execute(
+        "UPDATE recordings SET deleted = 1 WHERE id = ? AND deleted = 0",
+        (rec_id,),
+    )
+    return cursor.rowcount > 0
+
+
+def restore_recording(conn: sqlite3.Connection, rec_id: str) -> bool:
+    """Clear the deleted flag on a recording — the inverse of `soft_delete_recording`.
+
+    Returns:
+        True if a row was flipped, False if `rec_id` is unknown or not deleted.
+    """
+    cursor = conn.execute(
+        "UPDATE recordings SET deleted = 0 WHERE id = ? AND deleted = 1",
+        (rec_id,),
+    )
+    return cursor.rowcount > 0
+
+
+def upsert_device_heartbeat(
+    conn: sqlite3.Connection,
+    *,
+    device_id: str,
+    last_seen: str,
+    queue_depth: int,
+) -> None:
+    """Record a device heartbeat, inserting the device row on its first-ever ping.
+
+    No pre-registration: a heartbeat from a device that never uploaded a recording
+    is still a valid device to track, so this upserts rather than requiring the
+    row to already exist.
+    """
+    conn.execute(
+        """
+        INSERT INTO devices (id, last_seen, queue_depth)
+        VALUES (?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            last_seen = excluded.last_seen,
+            queue_depth = excluded.queue_depth
+        """,
+        (device_id, last_seen, queue_depth),
+    )
+
+
+def list_devices(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """All devices, most recently seen first, for the web UI's read-only device panel."""
+    return conn.execute(
+        "SELECT * FROM devices ORDER BY last_seen DESC",
+    ).fetchall()
+
+
 def source_stats(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """Per-source counts/durations over non-deleted recordings, for `/stats` (FR-18).
 
