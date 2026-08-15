@@ -138,3 +138,116 @@ def test_row_markup_id_and_audio_src(client, settings):
     assert f'id="rec-{rid}"' in body
     assert f"/ui/recordings/{rid}/audio" in body
     assert f"/api/recordings/{rid}/audio" not in body
+
+
+# --- soft-delete / undo (FR-23) --------------------------------------------------
+
+
+def test_delete_sets_deleted_flag_and_returns_undo_fragment(client, settings):
+    rid = "delx0000001"
+    _insert(settings, id=rid, source="kid", created_at="2026-08-12T10:00:00Z")
+    resp = client.post(f"/ui/recordings/{rid}/delete")
+    assert resp.status_code == 200
+    assert f"/ui/recordings/{rid}/restore" in resp.text
+
+    db.migrate(settings.db_path)
+    with db.session(settings.db_path) as conn:
+        row = store.get_recording(conn, rid)
+    assert row["deleted"] == 1
+
+
+def test_delete_never_removes_the_audio_file(client, settings):
+    rid = "delx0000002"
+    _insert(settings, id=rid, source="kid", created_at="2026-08-12T10:00:00Z")
+    path = settings.audio_dir / "kid" / "202608" / f"{rid}.wav"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"RIFF....WAVEfmt ")
+
+    resp = client.post(f"/ui/recordings/{rid}/delete")
+    assert resp.status_code == 200
+    assert path.exists(), "soft-delete must never unlink the audio file (CLAUDE.md)"
+
+
+def test_delete_fragment_keeps_row_id_and_drops_audio_element(client, settings):
+    rid = "delx0000003"
+    _insert(settings, id=rid, source="kid", created_at="2026-08-12T10:00:00Z")
+    resp = client.post(f"/ui/recordings/{rid}/delete")
+    body = resp.text
+    assert f'id="rec-{rid}"' in body
+    assert "<audio" not in body
+
+
+def test_restore_clears_flag_and_returns_normal_row(client, settings):
+    rid = "delx0000004"
+    _insert(settings, id=rid, source="kid", created_at="2026-08-12T10:00:00Z", deleted=1)
+    resp = client.post(f"/ui/recordings/{rid}/restore")
+    assert resp.status_code == 200
+    body = resp.text
+    assert f'id="rec-{rid}"' in body
+    assert "<audio" in body
+
+    db.migrate(settings.db_path)
+    with db.session(settings.db_path) as conn:
+        row = store.get_recording(conn, rid)
+    assert row["deleted"] == 0
+
+
+def test_deleted_row_absent_from_index(client, settings):
+    rid = "delx0000005"
+    _insert(settings, id=rid, source="kid", created_at="2026-08-12T10:00:00Z")
+    client.post(f"/ui/recordings/{rid}/delete")
+    resp = client.get("/")
+    assert f"rec-{rid}" not in resp.text
+
+
+def test_restored_row_present_in_index(client, settings):
+    rid = "delx0000006"
+    _insert(settings, id=rid, source="kid", created_at="2026-08-12T10:00:00Z", deleted=1)
+    resp = client.get("/")
+    assert f"rec-{rid}" not in resp.text
+
+    client.post(f"/ui/recordings/{rid}/restore")
+    resp = client.get("/")
+    assert f"rec-{rid}" in resp.text
+
+
+def test_delete_unknown_id_404(client, settings):
+    db.migrate(settings.db_path)
+    resp = client.post("/ui/recordings/doesnotexist/delete")
+    assert resp.status_code == 404
+
+
+def test_restore_unknown_id_404(client, settings):
+    db.migrate(settings.db_path)
+    resp = client.post("/ui/recordings/doesnotexist/restore")
+    assert resp.status_code == 404
+
+
+def test_delete_already_deleted_is_idempotent_200(client, settings):
+    rid = "delx0000007"
+    _insert(settings, id=rid, source="kid", created_at="2026-08-12T10:00:00Z", deleted=1)
+    resp = client.post(f"/ui/recordings/{rid}/delete")
+    assert resp.status_code == 200
+    assert f'id="rec-{rid}"' in resp.text
+
+
+def test_restore_not_deleted_is_idempotent_200(client, settings):
+    rid = "delx0000008"
+    _insert(settings, id=rid, source="kid", created_at="2026-08-12T10:00:00Z")
+    resp = client.post(f"/ui/recordings/{rid}/restore")
+    assert resp.status_code == 200
+    assert f'id="rec-{rid}"' in resp.text
+
+
+def test_delete_route_no_api_key_required(client, settings):
+    rid = "delx0000009"
+    _insert(settings, id=rid, source="kid", created_at="2026-08-12T10:00:00Z")
+    resp = client.post(f"/ui/recordings/{rid}/delete")
+    assert resp.status_code == 200
+
+
+def test_restore_route_no_api_key_required(client, settings):
+    rid = "delx0000010"
+    _insert(settings, id=rid, source="kid", created_at="2026-08-12T10:00:00Z", deleted=1)
+    resp = client.post(f"/ui/recordings/{rid}/restore")
+    assert resp.status_code == 200

@@ -111,6 +111,42 @@ body {
   width: 100%;
 }
 
+.row-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 0.5rem;
+}
+
+.delete-btn,
+.undo-btn {
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.delete-btn:hover,
+.undo-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.recording-deleted {
+  opacity: 0.55;
+}
+
+.deleted-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.85rem;
+  font-style: italic;
+  color: var(--muted);
+}
+
 .empty-state {
   color: var(--muted);
   font-style: italic;

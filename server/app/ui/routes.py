@@ -6,15 +6,15 @@ tag can't send `X-API-Key`, so this module exposes an unauthenticated sibling th
 still goes through `app.audio.resolve_playable_audio`, the single owner of the
 path-escape guard.
 
-Soft-delete/undo (FR-23) and the read-only device panel (FR-24) are later steps.
-This module only builds the list + filter + playback foundation they'll sit on top
-of; `index.html` leaves a marked placeholder for the device panel.
+Soft-delete/undo (FR-23) lives here too: `delete_recording`/`restore_recording`
+below. The read-only device panel (FR-24) is a later step; `index.html` leaves a
+marked placeholder for it.
 """
 
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 
@@ -22,7 +22,7 @@ from app import store
 from app.api.deps import get_settings_dep
 from app.audio import parse_iso8601, resolve_playable_audio
 from app.config import Settings
-from app.db import session
+from app.db import session, transaction
 
 log = logging.getLogger("banter.ui")
 
@@ -173,3 +173,89 @@ def recording_audio(
         resolved = resolve_playable_audio(conn, settings, id)
 
     return FileResponse(resolved, media_type="audio/wav")
+
+
+@router.post("/ui/recordings/{id}/delete", response_class=HTMLResponse)
+def delete_recording(
+    id: str,
+    request: Request,
+    settings: Settings = Depends(get_settings_dep),
+) -> HTMLResponse:
+    """Soft-delete a recording (FR-23) and return its updated row fragment.
+
+    Undo is in-row, not a toast: the returned `_row_deleted.html` fragment carries
+    an Undo button posting back to `.../restore` with the same `hx-target`/
+    `hx-swap`, so HTMX swaps the deleted state back to the normal row in place.
+    This never unlinks the audio file (CLAUDE.md) — only `recordings.deleted`
+    flips, via `store.soft_delete_recording`.
+
+    Known, accepted limitation: `list_recordings` (used by `/` and
+    `/ui/recordings`) filters `deleted=0`, so once the page is reloaded a
+    soft-deleted row is simply gone from the list and this undo affordance is no
+    longer reachable from the UI. FR-23's bar is "soft-delete with undo", not
+    "undo survives reload" — the audio file is never destroyed, so nothing is
+    lost, it just needs a DB-level restore instead of a click. A "show deleted"
+    mode that would keep undo reachable after reload is out of scope for this
+    step.
+
+    Args:
+        id: Recording id.
+        request: Current request, required by `Jinja2Templates`.
+        settings: App settings, injected.
+
+    Returns:
+        The `_row_deleted.html` fragment for this row.
+
+    Raises:
+        HTTPException: 404 if `id` is unknown. If the row exists but is already
+            deleted, this is treated as an idempotent success (200) rather than
+            an error, matching `insert_recording`'s duplicate-tolerant precedent.
+    """
+    with session(settings.db_path) as conn:
+        existing = store.get_recording(conn, id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail="recording not found")
+
+        with transaction(conn):
+            store.soft_delete_recording(conn, id)
+        row = store.get_recording(conn, id)
+
+    return templates.TemplateResponse(request, "_row_deleted.html", {"r": row})
+
+
+@router.post("/ui/recordings/{id}/restore", response_class=HTMLResponse)
+def restore_recording(
+    id: str,
+    request: Request,
+    settings: Settings = Depends(get_settings_dep),
+) -> HTMLResponse:
+    """Undo a soft-delete (FR-23) and return the normal row fragment.
+
+    Inverse of `delete_recording`: clears `recordings.deleted` via
+    `store.restore_recording` and returns `_row.html` so HTMX swaps the
+    deleted-state row back to the normal, playable row in place.
+
+    Args:
+        id: Recording id.
+        request: Current request, required by `Jinja2Templates`.
+        settings: App settings, injected.
+
+    Returns:
+        The `_row.html` fragment for this row.
+
+    Raises:
+        HTTPException: 404 if `id` is unknown. If the row exists but is not
+            currently deleted, this is treated as an idempotent success (200)
+            rather than an error, matching `insert_recording`'s
+            duplicate-tolerant precedent.
+    """
+    with session(settings.db_path) as conn:
+        existing = store.get_recording(conn, id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail="recording not found")
+
+        with transaction(conn):
+            store.restore_recording(conn, id)
+        row = store.get_recording(conn, id)
+
+    return templates.TemplateResponse(request, "_row.html", {"r": row})
