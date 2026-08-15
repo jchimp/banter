@@ -1,0 +1,9 @@
+{% if recordings %}
+<ul class="recordings">
+  {% for r in recordings %}
+    {% include "_row.html" %}
+  {% endfor %}
+</ul>
+{% else %}
+<p class="empty-state">No recordings yet.</p>
+{% endif %}
