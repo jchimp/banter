@@ -112,11 +112,12 @@ def index(
     normalized = _normalize_source(source)
     with session(settings.db_path) as conn:
         recordings = store.list_recordings(conn, source=normalized)
+        devices = store.list_devices(conn)
 
     return templates.TemplateResponse(
         request,
         "index.html",
-        {"recordings": recordings, "source": normalized},
+        {"recordings": recordings, "source": normalized, "devices": devices},
     )
 
 

@@ -251,3 +251,47 @@ def test_restore_route_no_api_key_required(client, settings):
     _insert(settings, id=rid, source="kid", created_at="2026-08-12T10:00:00Z", deleted=1)
     resp = client.post(f"/ui/recordings/{rid}/restore")
     assert resp.status_code == 200
+
+
+# --- device panel (FR-24) --------------------------------------------------------
+
+
+def _heartbeat(settings, *, device_id, last_seen, queue_depth=0):
+    """Seed a device heartbeat directly via `store`, bypassing the API route.
+
+    Mirrors `_insert` above: the UI route only reads devices, so a heartbeat is
+    seeded straight into the DB for speed and precise `last_seen` control.
+    """
+    db.migrate(settings.db_path)
+    with db.session(settings.db_path) as conn, db.transaction(conn):
+        store.upsert_device_heartbeat(
+            conn, device_id=device_id, last_seen=last_seen, queue_depth=queue_depth
+        )
+
+
+def test_index_shows_device_and_queue_depth(client, settings):
+    _heartbeat(settings, device_id="kidbox01", last_seen="2026-08-12T10:00:00Z", queue_depth=3)
+    resp = client.get("/")
+    body = resp.text
+    assert "kidbox01" in body
+    assert "3" in body
+
+
+def test_index_devices_empty_state(client, settings):
+    db.migrate(settings.db_path)
+    resp = client.get("/")
+    assert "No devices have checked in yet." in resp.text
+
+
+def test_index_no_api_key_required_with_devices(client, settings):
+    _heartbeat(settings, device_id="kidbox02", last_seen="2026-08-12T10:00:00Z")
+    resp = client.get("/")
+    assert resp.status_code == 200
+
+
+def test_index_devices_ordered_most_recent_first(client, settings):
+    _heartbeat(settings, device_id="older-dev", last_seen="2026-08-12T10:00:00Z")
+    _heartbeat(settings, device_id="newer-dev", last_seen="2026-08-13T10:00:00Z")
+    resp = client.get("/")
+    body = resp.text
+    assert body.index("newer-dev") < body.index("older-dev")
