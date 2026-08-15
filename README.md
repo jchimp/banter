@@ -187,7 +187,7 @@ reply and no database write.
 |---|---|
 | Kid records | Both parents get the joke as a voice message with a timestamp/duration caption, within ~10 s |
 | Parent sends a voice note | Stored as `source=mom\|dad`, `origin=telegram`; the OGG is kept alongside the transcoded 16 kHz WAV; BTN2 plays it next (tier 1) |
-| `/joke [n]` | 1–5 random kid recordings (default 3). Doesn't count as a play on the box |
+| `/joke [n]` | 1–5 random kid recordings (default 1). Doesn't count as a play on the box |
 | `/stats` | Counts, total duration and last activity per source |
 
 ## Client — on the Pi

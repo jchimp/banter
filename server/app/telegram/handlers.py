@@ -37,7 +37,7 @@ _COMMAND_RE = re.compile(r"^/(\w+)(?:@\w+)?(?:\s+(.*))?$", re.DOTALL)
 #: id is accepted anywhere a kidbox-origin id would be.
 _ID_RE = re.compile(r"^[a-zA-Z0-9_-]{6,64}$")
 
-_DEFAULT_JOKE_COUNT = 3
+_DEFAULT_JOKE_COUNT = 1
 _MAX_JOKE_COUNT = 5
 _MIN_JOKE_COUNT = 1
 
@@ -277,7 +277,7 @@ async def _reply(ctx: BotContext, chat_id: str, text: str) -> None:
 
 
 def _parse_joke_count(arg: str | None) -> int:
-    """Parse `/joke [n]`'s argument: default 3, clamp to 1..5, garbage falls back to 3."""
+    """Parse `/joke [n]`'s argument: default 1, clamp to 1..5, garbage falls back to 1."""
     if arg is None or not arg.strip():
         return _DEFAULT_JOKE_COUNT
     try:

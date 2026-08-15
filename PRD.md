@@ -80,7 +80,7 @@ random uniform choice within it.
   with a caption (timestamp, duration).
 - **FR-16** A parent sending a **voice note** stores it as a recording with
   `source=mom|dad` (per chat mapping), `origin=telegram`. Reply confirms receipt.
-- **FR-17** `/joke [n]` returns `n` random kid recordings (default 3, max 5) as voice
+- **FR-17** `/joke [n]` returns `n` random kid recordings (default 1, max 5) as voice
   messages. Kid pool only (`source=kid`).
 - **FR-18** `/stats` — counts by source, total duration, last activity.
 - **FR-19** Unknown chat IDs are ignored entirely. Allowlist via

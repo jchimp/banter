@@ -284,11 +284,12 @@ def _insert_parent(settings, rec_id, source):
 @pytest.mark.parametrize(
     "arg,expected_n",
     [
-        (None, 3),
+        (None, 1),
+        ("3", 3),
         ("5", 5),
         ("99", 5),
         ("0", 1),
-        ("abc", 3),
+        ("abc", 1),
     ],
 )
 async def test_joke_count_parsing(settings, fake_client, ctx, arg, expected_n):
