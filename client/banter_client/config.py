@@ -64,6 +64,11 @@ class ClientSettings(BaseSettings):
     backoff_start_seconds: float = 2.0
     backoff_max_seconds: float = 60.0
 
+    # --- heartbeat -----------------------------------------------------------
+    # Fixed interval, no backoff (see heartbeat.py docstring): the server must
+    # notice a dead device promptly, not after a growing backoff delay.
+    heartbeat_interval_seconds: float = 60.0
+
     @property
     def recordings_url(self) -> str:
         return f"{self.api_url.rstrip('/')}/api/recordings"
