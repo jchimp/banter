@@ -5,9 +5,14 @@ Kept small and local per CLAUDE.md. Callers own the connection/transaction via
 """
 
 import sqlite3
+from collections.abc import Sequence
 
 from app.audio import parse_iso8601
 from app.selection import Candidate
+
+# Literal mapping from parent role -> its notified-flag column. Never build this
+# column name from caller input — an unknown role must raise, not interpolate.
+_NOTIFIED_COLUMN = {"mom": "notified_mom", "dad": "notified_dad"}
 
 
 def insert_recording(
@@ -20,22 +25,33 @@ def insert_recording(
     duration_ms: int,
     bytes: int,
     created_at: str,
+    original_path: str | None = None,
+    telegram_file_id: str | None = None,
 ) -> bool:
     """Insert a recording row, no-op if `id` already exists.
 
     This is the idempotency primitive: the client generates `id`, the server
     upserts on it so a retried upload never creates a duplicate row.
 
+    `original_path` and `telegram_file_id` are only ever set for `origin='telegram'`
+    rows: the untranscoded OGG/Opus voice note kept alongside the transcoded WAV
+    (CLAUDE.md gotcha 1), and the Telegram file id used to avoid re-downloading on
+    a resend. Both default to None so the kidbox upload path (which has neither)
+    needs no change at its call site.
+
     Returns:
         True if a new row was created, False if `id` already existed.
     """
     cursor = conn.execute(
         """
-        INSERT INTO recordings (id, source, origin, path, duration_ms, bytes, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO recordings (
+            id, source, origin, path, duration_ms, bytes, created_at,
+            original_path, telegram_file_id
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO NOTHING
         """,
-        (id, source, origin, path, duration_ms, bytes, created_at),
+        (id, source, origin, path, duration_ms, bytes, created_at, original_path, telegram_file_id),
     )
     return cursor.rowcount > 0
 
@@ -161,3 +177,235 @@ def record_play(
         """,
         (played_at, recording_id),
     )
+
+
+def pending_notifications(conn: sqlite3.Connection, limit: int = 20) -> list[sqlite3.Row]:
+    """Kidbox recordings not yet fully notified to parents, oldest first.
+
+    Feeds the Telegram send loop: only `origin='kidbox'` rows need a parent
+    notification (a `telegram`-origin row is a reply already delivered by hand),
+    and `notified=0` is the cheap pre-computed filter set by `finalize_notified`.
+    """
+    return conn.execute(
+        """
+        SELECT * FROM recordings
+        WHERE origin = 'kidbox' AND notified = 0 AND deleted = 0
+        ORDER BY created_at
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+
+
+def mark_notified(
+    conn: sqlite3.Connection,
+    rec_id: str,
+    role: str,
+    *,
+    file_id: str | None = None,
+) -> None:
+    """Flag `rec_id` as sent to the given parent `role` ('mom' or 'dad').
+
+    Runs inside the caller's transaction — does not open or commit its own. The
+    column to set is looked up from a literal dict, never built from `role`
+    directly, so a bad role can't reach the SQL text.
+
+    `file_id`, when given, is written with `COALESCE(telegram_file_id, ?)` so the
+    first successfully-sent file id wins; a later resend (e.g. to the other
+    parent, or a retry with a re-uploaded file) doesn't churn a value already on
+    the row.
+
+    Raises:
+        ValueError: `role` is not a known parent role.
+    """
+    column = _NOTIFIED_COLUMN.get(role)
+    if column is None:
+        raise ValueError(f"unknown parent role: {role!r}")
+
+    if file_id is not None:
+        conn.execute(
+            f"""
+            UPDATE recordings
+            SET {column} = 1, telegram_file_id = COALESCE(telegram_file_id, ?)
+            WHERE id = ?
+            """,
+            (file_id, rec_id),
+        )
+    else:
+        conn.execute(
+            f"UPDATE recordings SET {column} = 1 WHERE id = ?",
+            (rec_id,),
+        )
+
+
+def finalize_notified(conn: sqlite3.Connection, rec_id: str, roles: Sequence[str]) -> bool:
+    """Set `notified = 1` on `rec_id` once every role in `roles` is flagged.
+
+    `roles` is the *configured* parent roles for this deployment (a parent with
+    a blank chat id is excluded by the caller before this is called), so a
+    single-parent deployment still reaches `notified=1` off just that one flag.
+
+    An empty `roles` deliberately never flips `notified` — "notified" should mean
+    "sent to at least the configured parents", and with zero parents configured
+    there is nothing to have sent it to, so the row would sit pending forever
+    rather than being silently marked done.
+
+    Returns:
+        True if this call flipped `notified` to 1, False otherwise (already set,
+        or not every configured role's flag is set yet).
+    """
+    if not roles:
+        return False
+
+    columns = []
+    for role in roles:
+        column = _NOTIFIED_COLUMN.get(role)
+        if column is None:
+            raise ValueError(f"unknown parent role: {role!r}")
+        columns.append(column)
+
+    condition = " AND ".join(f"{column} = 1" for column in columns)
+    cursor = conn.execute(
+        f"""
+        UPDATE recordings
+        SET notified = 1
+        WHERE id = ? AND notified = 0 AND {condition}
+        """,
+        (rec_id,),
+    )
+    return cursor.rowcount > 0
+
+
+def random_kid_recordings(conn: sqlite3.Connection, n: int) -> list[sqlite3.Row]:
+    """Up to `n` random non-deleted kid recordings, for `/joke` (FR-17)."""
+    return conn.execute(
+        """
+        SELECT * FROM recordings
+        WHERE source = 'kid' AND deleted = 0
+        ORDER BY RANDOM()
+        LIMIT ?
+        """,
+        (n,),
+    ).fetchall()
+
+
+def list_recordings(
+    conn: sqlite3.Connection,
+    *,
+    source: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[sqlite3.Row]:
+    """Non-deleted recordings, newest first, for the web UI's recordings list.
+
+    Offset pagination rather than keyset: the dataset is small (a single family's
+    recordings) so the O(offset) scan cost is negligible, and plain offset/limit
+    keeps the HTMX pagination markup (page links with a fixed offset) trivial
+    compared to threading a keyset cursor through query params.
+
+    Source validation belongs to the caller, not here — this stays a plain
+    data-access function that trusts its arguments.
+    """
+    if source is not None:
+        return conn.execute(
+            """
+            SELECT * FROM recordings
+            WHERE deleted = 0 AND source = ?
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?
+            """,
+            (source, limit, offset),
+        ).fetchall()
+    return conn.execute(
+        """
+        SELECT * FROM recordings
+        WHERE deleted = 0
+        ORDER BY created_at DESC
+        LIMIT ? OFFSET ?
+        """,
+        (limit, offset),
+    ).fetchall()
+
+
+def soft_delete_recording(conn: sqlite3.Connection, rec_id: str) -> bool:
+    """Flag a recording as deleted.
+
+    Never touches the file on disk (CLAUDE.md: no hard delete, ever) — this only
+    flips the `deleted` column so the row drops out of playback/UI queries while
+    the audio stays on disk for recovery.
+
+    Returns:
+        True if a row was flipped, False if `rec_id` is unknown or already deleted.
+    """
+    cursor = conn.execute(
+        "UPDATE recordings SET deleted = 1 WHERE id = ? AND deleted = 0",
+        (rec_id,),
+    )
+    return cursor.rowcount > 0
+
+
+def restore_recording(conn: sqlite3.Connection, rec_id: str) -> bool:
+    """Clear the deleted flag on a recording — the inverse of `soft_delete_recording`.
+
+    Returns:
+        True if a row was flipped, False if `rec_id` is unknown or not deleted.
+    """
+    cursor = conn.execute(
+        "UPDATE recordings SET deleted = 0 WHERE id = ? AND deleted = 1",
+        (rec_id,),
+    )
+    return cursor.rowcount > 0
+
+
+def upsert_device_heartbeat(
+    conn: sqlite3.Connection,
+    *,
+    device_id: str,
+    last_seen: str,
+    queue_depth: int,
+) -> None:
+    """Record a device heartbeat, inserting the device row on its first-ever ping.
+
+    No pre-registration: a heartbeat from a device that never uploaded a recording
+    is still a valid device to track, so this upserts rather than requiring the
+    row to already exist.
+    """
+    conn.execute(
+        """
+        INSERT INTO devices (id, last_seen, queue_depth)
+        VALUES (?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            last_seen = excluded.last_seen,
+            queue_depth = excluded.queue_depth
+        """,
+        (device_id, last_seen, queue_depth),
+    )
+
+
+def list_devices(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """All devices, most recently seen first, for the web UI's read-only device panel."""
+    return conn.execute(
+        "SELECT * FROM devices ORDER BY last_seen DESC",
+    ).fetchall()
+
+
+def source_stats(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Per-source counts/durations over non-deleted recordings, for `/stats` (FR-18).
+
+    One row per `source` ('kid', 'mom', 'dad'); no synthetic "total" row — summing
+    three rows client-side is trivial and keeping this a plain GROUP BY keeps the
+    query (and its result shape) simple to test.
+    """
+    return conn.execute(
+        """
+        SELECT
+            source,
+            COUNT(*) AS count,
+            COALESCE(SUM(duration_ms), 0) AS total_ms,
+            MAX(created_at) AS last_at
+        FROM recordings
+        WHERE deleted = 0
+        GROUP BY source
+        ORDER BY source
+        """
+    ).fetchall()

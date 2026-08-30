@@ -29,6 +29,7 @@ from app.audio import (
     is_canonical,
     parse_iso8601,
     probe_wav,
+    resolve_playable_audio,
 )
 from app.config import Settings
 from app.db import session, transaction
@@ -207,27 +208,13 @@ async def get_recording_audio(
 ) -> FileResponse:
     """Stream a recording's WAV file.
 
-    404 on an unknown or soft-deleted id (`store.get_playable`). The row's `path`
-    is caller-controlled data (it came from `insert_recording`, not user input at
-    request time, but treat it as untrusted anyway): resolve it against
-    `settings.audio_dir` and refuse to serve anything that resolves outside that
-    tree, so a malformed/hand-edited row can't be used to read arbitrary files.
+    404 on any failure mode — unknown/soft-deleted id, path escape, or missing file
+    on disk. All of that lives in `app.audio.resolve_playable_audio`, the single
+    owner of the path-escape guard shared with the (unauthenticated) web-UI playback
+    route; this handler is just the auth-gated adapter over it.
     """
     with session(settings.db_path) as conn:
-        row = store.get_playable(conn, id)
-
-    if row is None:
-        raise HTTPException(status_code=404, detail="recording not found")
-
-    audio_dir = settings.audio_dir.resolve()
-    resolved = (settings.audio_dir / row["path"]).resolve()
-    if not resolved.is_relative_to(audio_dir):
-        log.error("audio_path_escape | api | id=%s path=%s", id, row["path"])
-        raise HTTPException(status_code=404, detail="recording not found")
-
-    if not resolved.is_file():
-        log.error("audio_missing_on_disk | api | id=%s path=%s", id, row["path"])
-        raise HTTPException(status_code=404, detail="recording not found")
+        resolved = resolve_playable_audio(conn, settings, id)
 
     return FileResponse(resolved, media_type="audio/wav")
 

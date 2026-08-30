@@ -1,0 +1,18 @@
+<section class="devices-panel" aria-label="Devices">
+  <h2 class="devices-panel-title">Devices</h2>
+  {% if devices %}
+  <ul class="devices">
+    {% for d in devices %}
+      <li class="device" id="dev-{{ d['id'] }}">
+        <span class="device-id">{{ d['id'] }}</span>
+        <span class="device-meta">
+          <span class="device-last-seen">last seen {{ d['last_seen'] | friendly_time }}</span>
+          <span class="device-queue">queue {{ d['queue_depth'] }}</span>
+        </span>
+      </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="empty-state">No devices have checked in yet.</p>
+  {% endif %}
+</section>

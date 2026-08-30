@@ -85,6 +85,11 @@ Any new hardware touchpoint gets a protocol + a simulated implementation in the 
 commit. `uv run banter-demo` must keep working with `BANTER_AUDIO_BACKEND=synthetic`.
 
 ## Hardware facts the code must respect
+The Codec Zero's 2×20 socket is **not** pass-through — seated on the Pi it buries every
+pin below. BTN1/BTN2/ring therefore reach the header via a GPIO splitter board on a short
+ribbon (see `PARTS.md` / `wiring.svg`). Pin numbers below are unchanged by that; code
+should not care.
+
 | Pin | Use | Notes |
 |---|---|---|
 | GPIO17 (pin 11) | BTN1 record | `Button(17)` — internal pull-up, switch to GND |

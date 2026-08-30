@@ -7,11 +7,11 @@ them on Telegram and send jokes back as voice notes. The box plays them.
 Docs: [`PRD.md`](PRD.md) (what) · [`ROADMAP.md`](ROADMAP.md) (order) ·
 [`CLAUDE.md`](CLAUDE.md) (how) · [`PARTS.md`](PARTS.md) · [`wiring.svg`](wiring.svg)
 
-**Status: M1 + M2 complete** — the record loop works end-to-end (kid holds BTN1, the
-WAV lands in the client's on-disk queue, the uploader delivers it to
-`POST /api/recordings` with retry) and so does playback: BTN2 fetches a joke from
-`select_next()`, plays it, and posts a play receipt; offline taps fall back to a local
-cache. No Telegram, no web UI yet.
+**Status: M1–M4 built** — the record loop, playback, the Telegram bot (outbound notify,
+inbound voice notes, `/joke`, `/stats`) and the web UI (recording list, source filter,
+soft-delete/undo, read-only device panel) all work end-to-end; current work is on
+`m4-web-ui`. Outstanding: M3's end-to-end pass against a real bot token, and M1's
+hardware pass on the Pi.
 
 ```
    ┌──────── kidbox (Pi Zero 2 W) ────────┐        ┌─── home server (Docker) ───┐
@@ -104,7 +104,7 @@ only `queue.done()`, called after a 2xx, removes a file.
 
 ## Try it: the M2 playback loop
 Same two-terminal setup as above. Once a recording or two has been uploaded (seed a
-couple with the record loop, or a parent voice note once M3 lands), tap `p`:
+couple with the record loop, or send a parent voice note to the bot), tap `p`:
 
 ```bash
 # terminal 2: client, dev profile (as above)
@@ -151,6 +151,7 @@ tap of an outage pays a timeout — the rest are instant.
 ```bash
 cd server
 cp .env.example .env          # set API_KEY:  openssl rand -hex 24
+                              # and the TELEGRAM_* vars (see below) to enable the bot
 uv sync
 DATA_DIR=./data uv run uvicorn app.main:app --reload --port 8080
 curl localhost:8080/healthz   # {"ok":true}
@@ -166,6 +167,52 @@ docker compose up -d --build
 curl localhost:8080/healthz
 ```
 Audio and the SQLite file live in `./data` on the host (mounted at `/data`).
+
+## Telegram bot
+The bot is a long-polling background task inside the server's lifespan — no webhook,
+no public URL. A blank `TELEGRAM_BOT_TOKEN` disables it entirely; the rest of the
+server runs as normal.
+
+1. Message [@BotFather](https://t.me/BotFather), `/newbot`, copy the token into
+   `TELEGRAM_BOT_TOKEN`.
+2. Have each parent send the bot any message, then read the chat ids from
+   `https://api.telegram.org/bot<TOKEN>/getUpdates` and set `TELEGRAM_CHAT_MOM` /
+   `TELEGRAM_CHAT_DAD`. Leave one blank for a single-parent setup.
+3. `docker compose up -d --build`. The image already carries ffmpeg.
+
+Only those two chat ids are served. Anything from anywhere else is dropped with no
+reply and no database write.
+
+| Direction | Behaviour |
+|---|---|
+| Kid records | Both parents get the joke as a voice message with a timestamp/duration caption, within ~10 s |
+| Parent sends a voice note | Stored as `source=mom\|dad`, `origin=telegram`; the OGG is kept alongside the transcoded 16 kHz WAV; BTN2 plays it next (tier 1) |
+| `/joke [n]` | 1–5 random kid recordings (default 1). Doesn't count as a play on the box |
+| `/stats` | Counts, total duration and last activity per source |
+
+## Web UI
+`GET /` lists all recordings newest-first — source/origin badge, timestamp, duration,
+play count, and an inline `<audio>` player. `?source=kid|mom|dad` filters the list; the
+filter bar swaps it via an HTMX partial (`GET /ui/recordings`) instead of a full reload.
+
+No login (FR-25): this is a trusted-LAN family page, not a public app. Reach it at
+`http://<home-server>:8080/` (port 8080, per `docker-compose.yml`).
+
+Deleting a recording is soft-delete only — `recordings.deleted` flips, the WAV file is
+never unlinked (CLAUDE.md) — and the row is replaced in place with an inline Undo
+button. **Undo only works until the page is reloaded**: `list_recordings` filters
+`deleted=0`, so a reload drops the row (and the Undo affordance) from view even though
+the audio is still on disk and recoverable at the DB level.
+
+The `<audio>` player hits `GET /ui/recordings/{id}/audio`, a separate, unauthenticated
+route from `/api/recordings/{id}/audio` — a plain `<audio src>` tag can't send an
+`X-API-Key` header, so the UI needs a key-free sibling. Both routes share
+`app.audio.resolve_playable_audio`, the single owner of the path-escape guard.
+
+A read-only device panel below the list shows each device's last heartbeat and queue
+depth (see `POST /api/devices/{id}/heartbeat` below). htmx is vendored at
+`server/app/static/htmx.min.js` (served via a `StaticFiles` mount), not loaded from a
+CDN, so the page works with no outbound DNS.
 
 ## Client — on the Pi
 ```bash
@@ -202,6 +249,7 @@ Implemented so far (full contract in `PRD.md` §5). All `/api/*` require header
 | GET | `/api/recordings/next?device_id=` | `select_next()` → `200 {id, source, duration_ms, created_at, play_count, audio_url}`, or `204` if nothing selectable |
 | GET | `/api/recordings/{id}/audio` | Streams the canonical WAV; `404` on unknown or soft-deleted id |
 | POST | `/api/recordings/{id}/played` | body `{device_id, played_at?}` → `200 {id, play_count}`; idempotent on the exact `(id, device_id, played_at)` triple |
+| POST | `/api/devices/{id}/heartbeat` | body `{queue_depth: int}` → `200 {id, last_seen}`; upserts, no pre-registration |
 | GET | `/healthz` | `{"ok": true}` — no auth |
 
 `id` is client-generated; a repeat upload of the same `id` is a no-op 200, not a new
@@ -215,6 +263,11 @@ Plain SQL in `server/migrations/NNN_name.sql`, applied on startup and tracked in
 commits implicitly, so a file can't be wrapped in one transaction and may replay
 after a mid-file crash. Details in `app/db.py`.
 
+`003_parent_notifications.sql` is the one exception: SQLite has no
+`ALTER TABLE ... ADD COLUMN IF NOT EXISTS`. If it ever half-applies, drop the
+partially-added column by hand and let it rerun.
+
 ## Next
-M3 — the Telegram bot (outbound notifications, inbound voice notes, `/joke`,
-`/stats`). See `ROADMAP.md`.
+M4 (web UI) is complete on `m4-web-ui`. Outstanding: M3's end-to-end pass against a
+real bot token (`docs/M3-VERIFY.md`) and M1's hardware pass on the Pi. See
+`ROADMAP.md`.

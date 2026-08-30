@@ -107,9 +107,10 @@ class FakeAudio:
         self._on_done: Callable[[], None] | None = None
 
     def start_record(self, path: Path) -> None:
-        # Controller checks `path.exists()` before keeping a recording, same as a
-        # real backend leaving a WAV on disk -- so a fake must leave one too.
-        path.write_bytes(b"RIFF....WAVEfake")
+        # The controller probes the finished file for real audio, not just its
+        # existence -- a header-only WAV is exactly the bug that guard exists for --
+        # so the fake has to leave a genuinely playable one, like a real backend does.
+        path.write_bytes(_wav_bytes(seconds=1.0))
         self.is_recording = True
 
     def stop_record(self) -> float:

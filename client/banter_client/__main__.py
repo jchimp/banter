@@ -16,6 +16,7 @@ from banter_client.backends.base import ButtonCallbacks
 from banter_client.backends.factory import describe, make_buttons
 from banter_client.config import ClientSettings, get_settings
 from banter_client.controller import RecordController
+from banter_client.heartbeat import Heartbeat
 from banter_client.player import Player
 from banter_client.queue import RecordingMeta, RecordingQueue
 from banter_client.uploader import Uploader
@@ -37,6 +38,7 @@ class App:
         # Uploader and controller share one ring instance so "recording" / "uploading"
         # / "queued" feedback don't fight each other over the same NeoPixels.
         self.uploader = Uploader(settings, self.queue, ring=self.controller.ring)
+        self.heartbeat = Heartbeat(settings, self.queue)
         self.buttons = make_buttons(
             settings,
             ButtonCallbacks(
@@ -72,6 +74,7 @@ class App:
         )
 
         self.uploader.start()
+        self.heartbeat.start()
         self.buttons.start()
 
         signal.signal(signal.SIGINT, self._on_signal)
@@ -83,6 +86,7 @@ class App:
             self.buttons.close()
             self.controller.close()
             self.uploader.stop()
+            self.heartbeat.stop()
         log.info("event=bye")
         return 0
 

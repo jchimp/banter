@@ -124,6 +124,32 @@ def test_audio_file_missing_on_disk_404(client, settings, post_recording):
     assert resp.status_code == 404
 
 
+def test_audio_path_escape_row_404(client, settings):
+    """Regression test for the refactor that moved the escape guard into
+    `app.audio.resolve_playable_audio` (shared with the M4 web-UI playback route):
+    a row whose `path` climbs out of `audio_dir` must still 404 at the route level,
+    identically to every other failure mode, and auth must still be required first.
+    """
+    rid = "audio0000005"
+    with db.session(settings.db_path) as conn, db.transaction(conn):
+        store.insert_recording(
+            conn,
+            id=rid,
+            source="kid",
+            origin="kidbox",
+            path="../../../../etc/passwd",
+            duration_ms=1000,
+            bytes=10,
+            created_at="2026-08-12T10:30:00Z",
+        )
+
+    unauth = client.get(f"/api/recordings/{rid}/audio")
+    assert unauth.status_code == 401
+
+    resp = client.get(f"/api/recordings/{rid}/audio", headers={"X-API-Key": "test-key"})
+    assert resp.status_code == 404
+
+
 # --- POST /api/recordings/{id}/played: auth --------------------------------------
 
 

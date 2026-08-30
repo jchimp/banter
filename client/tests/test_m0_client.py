@@ -53,3 +53,7 @@ def test_error_recovers_to_idle_only():
 @pytest.mark.parametrize("mode", ["hold", "toggle"])
 def test_button_modes_accepted(mode):
     assert ClientSettings(button_mode=mode, _env_file=None).button_mode == mode
+
+
+def test_default_heartbeat_interval():
+    assert ClientSettings(_env_file=None).heartbeat_interval_seconds == 60.0

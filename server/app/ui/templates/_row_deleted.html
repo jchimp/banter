@@ -1,0 +1,18 @@
+<li class="recording recording-deleted" id="rec-{{ r.id }}">
+  <div class="recording-meta">
+    <span class="badge badge-{{ r.source }}">{{ r.source }} · {{ r.origin | origin_label }}</span>
+    <span class="timestamp">{{ r.created_at | friendly_time }}</span>
+    <span class="duration">{{ r.duration_ms | duration }}</span>
+    <span class="play-count">played {{ r.play_count }}x</span>
+  </div>
+  <div class="deleted-notice">
+    <span>Deleted</span>
+    <button
+      type="button"
+      class="undo-btn"
+      hx-post="/ui/recordings/{{ r.id }}/restore"
+      hx-target="#rec-{{ r.id }}"
+      hx-swap="outerHTML"
+    >Undo</button>
+  </div>
+</li>
