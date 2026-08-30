@@ -13,7 +13,10 @@ Prices are ballpark USD. `☐` = buy / check inventory.
 | ☐ | Speaker, **8 Ω** 1–3 W | Codec Zero drives 8Ω directly — no amp needed. | https://www.adafruit.com/product/4227 | 3 |
 | ☐ | microSD 32 GB A1 | Raspberry Pi OS Lite (64-bit). | any | 8 |
 | ☐ | 5V **2.5 A** micro-USB PSU | Must be a good one — LEDs + audio + WiFi spike together. | official RPi PSU | 8 |
-| ☐ | Stacking / extra-tall 2×20 header | The HAT covers all 40 pins; this is how buttons + ring reach GPIO. | https://www.adafruit.com/product/2223 | 3 |
+| ☐ | 40-pin GPIO splitter / expansion board (2 × 2×20 sockets) | The HAT goes in one socket, your buttons + ring wire into the other. Pimoroni Mini Black HAT Hack3r, or any generic 1→2 GPIO expansion board. | https://shop.pimoroni.com/products/mini-black-hat-hack3r | 10–15 |
+| ☐ | 40-pin female–female ribbon, **≤10 cm** | Pi header → splitter. Keep it short: I²S bit clock runs ~3 MHz and the HAT now hangs off a cable. | https://www.adafruit.com/product/1988 | 4 |
+
+**Why a splitter and not a stacking header:** the Codec Zero's 2×20 socket is *not* pass-through — it is closed on top and covers the whole header, so pins 11 (GPIO17), 15 (GPIO22), 19 (GPIO10) and every spare 5V/GND are buried once the HAT is seated. A tall header on the Pi doesn't help; the pass-through would have to be on the HAT. The splitter is the solderless way out — it also means the HAT is no longer stacked on the Pi, which is why the enclosure section below wants a second board position.
 
 ## Buttons (2)
 
@@ -44,15 +47,18 @@ Prices are ballpark USD. `☐` = buy / check inventory.
 | ☐ | ABS project box ~200×120×75 mm | Sold as "waterproof junction box" — cheap, easy to drill. Gasket unused. | https://www.amazon.com/Water-resistant-Electrical-Instrument-Communications-200x120x75mm/dp/B08B1PGN2N | 12 |
 | ☐ | Diffuser: 45 mm white acrylic disc or 3D-printed 1.5 mm insert | Over the ring window. Frosted tape works in a pinch. | any | 2 |
 | ☐ | Jumper wires F-F / F-M | Ring + button wiring. | any | 3 |
-| ☐ | Speaker grille cloth + M2.5 standoffs/screws | Mounting. | any | 4 |
+| ☐ | Speaker grille cloth + M2.5 standoffs/screws | Mounting — **two** board positions now (Pi and Codec Zero sit side by side, not stacked), plus the splitter. | any | 4 |
 
-**Panel cutouts:** 2 × 30.0 mm button holes (≥40 mm apart, center to center), 1 × 45 mm ring window, speaker hole pattern, micro-USB power slot on the side.
+**Panel cutouts:** 2 × 30.0 mm button holes (≥40 mm apart, center to center), 1 × 45 mm ring window, speaker hole pattern, a small (~3 mm) mic port, micro-USB power slot on the side.
+
+**Layout note:** the ribbon needs ~10 cm of slack routed between the Pi and the splitter, so plan for both boards lying flat rather than one on top of the other. The upside: the Codec Zero's on-board MEMS mic is no longer trapped under the Pi — mount that board mic-up against the panel mic port.
 
 ## Total
-~$95–105 new. Less whatever's already in your kit bins (SD, PSU, resistors, jumpers, box).
+~$105–115 new. Less whatever's already in your kit bins (SD, PSU, resistors, jumpers, box).
 
 ## Explicitly NOT needed
 - No USB mic — the Codec Zero has one on board.
 - No amp board — the Codec Zero drives the 8Ω speaker.
 - No USB OTG cable — nothing plugs into the USB port.
+- No soldering — the splitter keeps the whole build solderless. Don't try to desolder the Codec Zero's header or tack wires to its pads.
 - No display — dropped in this re-spec.
