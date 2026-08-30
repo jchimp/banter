@@ -20,26 +20,33 @@
   <rect class="bg" x="0" y="0" width="1080" height="760"/>
   <text class="title" x="30" y="42">Banter / kidbox — wiring (Pi Zero 2 W + Codec Zero)</text>
   <text class="sub" x="30" y="64">Mic, speaker amp and a spare button live on the HAT. You wire only: 2 arcade buttons, 1 NeoPixel ring, 1 speaker.</text>
+  <text class="sub" x="30" y="84">The HAT's socket is not pass-through, so it and your wiring each get one side of a GPIO splitter.</text>
 
-  <!-- Pi + HAT -->
-  <rect class="panel" x="30" y="100" width="250" height="420" rx="10"/>
+  <!-- Pi -> ribbon -> splitter -> HAT + free header -->
+  <rect class="panel" x="30" y="100" width="250" height="110" rx="10"/>
   <text class="lbls" x="45" y="128">Raspberry Pi Zero 2 W</text>
-  <rect class="hat" x="45" y="146" width="220" height="140" rx="8"/>
-  <text class="teal" x="58" y="170">Codec Zero HAT</text>
-  <text class="mut" x="58" y="192">on-board MEMS mic</text>
-  <text class="mut" x="58" y="210">speaker amp (8Ω, 1.2W)</text>
-  <text class="mut" x="58" y="228">spare button  GPIO27</text>
-  <text class="mut" x="58" y="246">status LEDs  GPIO23/24</text>
-  <rect class="pin" x="196" y="256" width="62" height="24" rx="5"/>
-  <text class="tiny" x="205" y="272">SPK + −</text>
+  <rect class="pin" x="45" y="152" width="140" height="28" rx="5"/>
+  <text class="tiny" x="55" y="170">micro-USB  5V 2.5A</text>
 
-  <text class="mut" x="45" y="312">stacking header exposes</text>
-  <text class="mut" x="45" y="328">GPIO above the HAT →</text>
-  <rect x="45" y="338" width="182" height="20" fill="#11181f" stroke="#3a4753"/>
-  <g fill="#3a4753"><rect x="50" y="342" width="6" height="6"/><rect x="62" y="342" width="6" height="6"/><rect x="74" y="342" width="6" height="6"/><rect x="86" y="342" width="6" height="6"/><rect x="98" y="342" width="6" height="6"/><rect x="110" y="342" width="6" height="6"/><rect x="122" y="342" width="6" height="6"/><rect x="134" y="342" width="6" height="6"/><rect x="146" y="342" width="6" height="6"/><rect x="158" y="342" width="6" height="6"/><rect x="170" y="342" width="6" height="6"/><rect x="182" y="342" width="6" height="6"/><rect x="194" y="342" width="6" height="6"/><rect x="206" y="342" width="6" height="6"/><rect x="218" y="342" width="6" height="6"/></g>
+  <line x1="120" y1="210" x2="120" y2="252" class="wg"/>
+  <line x1="145" y1="210" x2="145" y2="252" class="wg"/>
+  <text class="mut" x="165" y="236">40-pin ribbon  ≤10 cm</text>
 
-  <rect class="pin" x="45" y="466" width="140" height="28" rx="5"/>
-  <text class="tiny" x="55" y="484">micro-USB  5V 2.5A</text>
+  <rect class="panel" x="30" y="252" width="250" height="268" rx="10"/>
+  <text class="lbls" x="45" y="278">GPIO splitter  (2 × 2×20)</text>
+  <text class="tiny" x="45" y="298">socket A</text>
+  <rect class="hat" x="45" y="306" width="220" height="140" rx="8"/>
+  <text class="teal" x="58" y="330">Codec Zero HAT</text>
+  <text class="mut" x="58" y="352">on-board MEMS mic</text>
+  <text class="mut" x="58" y="370">speaker amp (8Ω, 1.2W)</text>
+  <text class="mut" x="58" y="388">spare button  GPIO27</text>
+  <text class="mut" x="58" y="406">status LEDs  GPIO23/24</text>
+  <rect class="pin" x="196" y="416" width="62" height="24" rx="5"/>
+  <text class="tiny" x="205" y="432">SPK + −</text>
+
+  <text class="mut" x="45" y="470">socket B — free header →</text>
+  <rect x="45" y="478" width="182" height="20" fill="#11181f" stroke="#3a4753"/>
+  <g fill="#3a4753"><rect x="50" y="482" width="6" height="6"/><rect x="62" y="482" width="6" height="6"/><rect x="74" y="482" width="6" height="6"/><rect x="86" y="482" width="6" height="6"/><rect x="98" y="482" width="6" height="6"/><rect x="110" y="482" width="6" height="6"/><rect x="122" y="482" width="6" height="6"/><rect x="134" y="482" width="6" height="6"/><rect x="146" y="482" width="6" height="6"/><rect x="158" y="482" width="6" height="6"/><rect x="170" y="482" width="6" height="6"/><rect x="182" y="482" width="6" height="6"/><rect x="194" y="482" width="6" height="6"/><rect x="206" y="482" width="6" height="6"/><rect x="218" y="482" width="6" height="6"/></g>
 
   <!-- PIN NODES -->
   <rect class="pin" x="360" y="100" width="196" height="42" rx="8"/>
@@ -115,5 +122,6 @@
   <!-- NOTES -->
   <rect class="panel" x="30" y="700" width="1020" height="44" rx="10"/>
   <text class="tiny" x="45" y="720">RESERVED — do not reuse: GPIO2/3 (I2C), GPIO18/19/20/21 (I2S audio), GPIO27 (HAT button), GPIO23/24 (HAT LEDs).  Free spares: GPIO5, 6, 12, 13, 16, 25.</text>
-  <text class="tiny" x="45" y="736">Ring on SPI0 needs  dtparam=spi=on  and  core_freq_min=500  in /boot/firmware/config.txt.   Halo variant: chain ring B DIN ← ring A DOUT, same GPIO10.</text>
+  <text class="tiny" x="45" y="736">Keep the ribbon ≤10 cm (I²S clock); the splitter passes ID_SD/ID_SC through, so the HAT still self-detects.</text>
+  <text class="tiny" x="45" y="752">Ring on SPI0 needs  dtparam=spi=on  and  core_freq_min=500  in /boot/firmware/config.txt.   Halo variant: chain ring B DIN ← ring A DOUT, same GPIO10.</text>
 </svg>
