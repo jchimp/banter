@@ -37,7 +37,8 @@ in all of them.
 
 | Profile | audio | buttons | ring | Use |
 |---|---|---|---|---|
-| Pi | `alsa` | `gpio` | `neopixel` | The real box |
+| Pi Zero | `alsa` | `gpio` | `neopixel` | The real box — Codec Zero HAT |
+| Pi 4 | `alsa` | `gpio` | `neopixel` | The real box — USB webcam mic + USB speaker |
 | Laptop | `sounddevice` | `keyboard` | `terminal` | Real mic/speakers, keys for buttons |
 | CI | `synthetic` | `keyboard` | `null` | No audio device at all |
 
@@ -220,7 +221,7 @@ sudo apt install -y alsa-utils
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 cd ~/banter/client
-cp .env.example .env          # set BANTER_API_URL + BANTER_API_KEY
+cp .env.example .env          # Pi 4 + USB audio? use .env.pi4.example instead
 arecord -l && aplay -l        # fill in BANTER_ALSA_CAPTURE / _PLAYBACK
 uv sync --extra hardware      # gpiozero + neopixel; omit --extra off-hardware
 uv run banter-client          # hold BTN1 to record; runs until SIGINT/SIGTERM
@@ -238,6 +239,34 @@ dtparam=spi=on
 core_freq_min=500
 ```
 Codec Zero setup follows the official Raspberry Pi HAT instructions.
+
+### Variant — Pi 4 with a USB mic and USB speaker
+Same client, same pins, same two commands: only the two ALSA device strings change.
+Start from `client/.env.pi4.example`.
+
+```bash
+arecord -L        # capture PCMs — take the plughw:CARD=<name>,DEV=0 line for the webcam
+aplay -L          # playback PCMs — same for the speaker
+```
+
+Use the `CARD=` form, not `plughw:1,0`. With two USB audio gadgets the card *indices*
+renumber across reboots, and pointing capture at the wrong one is quiet: `arecord`
+writes nothing, the clip fails the duration check and is discarded, and the kid's joke
+just disappears. The client checks both devices at startup and logs
+
+```
+ERROR | banter.client | event=alsa_device_missing which=capture configured='plughw:9,0' not found; cards=1:Webcam, 2:Speaker
+```
+
+It logs and keeps running rather than exiting — a restart loop over a typo would be
+worse. `plughw:` (not `hw:`) matters on both: it converts the webcam's native 48 kHz
+stereo to the 16 kHz mono the server expects.
+
+The ring is unchanged — GPIO10/SPI0, so `dtparam=spi=on` and `core_freq_min=500` still
+apply. With no HAT covering the header the buttons and ring wire straight to it, so
+none of the splitter hardware in `PARTS.md` is needed. Watch the account name: a Pi 4
+image's default user is whatever Imager was told, and `banter-client.service` plus
+`BANTER_QUEUE_DIR` / `BANTER_CACHE_DIR` all assume `pi`.
 
 ## API
 Implemented so far (full contract in `PRD.md` §5). All `/api/*` require header

@@ -85,6 +85,11 @@ Any new hardware touchpoint gets a protocol + a simulated implementation in the 
 commit. `uv run banter-demo` must keep working with `BANTER_AUDIO_BACKEND=synthetic`.
 
 ## Hardware facts the code must respect
+Two supported builds: **Zero 2 W + Codec Zero** (the default) and **Pi 4 + USB webcam
+mic / USB speaker** (`client/.env.pi4.example`). The pin table below holds for both —
+they differ only in the two ALSA device strings. The splitter note immediately below
+applies to the Codec Zero build only; the Pi 4 has no HAT covering its header.
+
 The Codec Zero's 2×20 socket is **not** pass-through — seated on the Pi it buries every
 pin below. BTN1/BTN2/ring therefore reach the header via a GPIO splitter board on a short
 ribbon (see `PARTS.md` / `wiring.svg`). Pin numbers below are unchanged by that; code

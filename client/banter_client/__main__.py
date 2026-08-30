@@ -12,6 +12,7 @@ import sys
 import threading
 from types import FrameType
 
+from banter_client.backends.audio import check_alsa_devices
 from banter_client.backends.base import ButtonCallbacks
 from banter_client.backends.factory import describe, make_buttons
 from banter_client.config import ClientSettings, get_settings
@@ -73,6 +74,8 @@ class App:
             recovered,
         )
 
+        self._check_audio_devices()
+
         self.uploader.start()
         self.heartbeat.start()
         self.buttons.start()
@@ -89,6 +92,17 @@ class App:
             self.heartbeat.stop()
         log.info("event=bye")
         return 0
+
+    def _check_audio_devices(self) -> None:
+        """Warn loudly if the configured ALSA devices aren't there.
+
+        Logged, not fatal: the unit restarts on failure, and a restart loop over a
+        typo'd device name is worse than a box that boots and says what's wrong.
+        """
+        if self.s.audio_backend != "alsa":
+            return
+        for problem in check_alsa_devices(self.s.alsa_capture, self.s.alsa_playback):
+            log.error("event=alsa_device_missing %s", problem)
 
     def _on_signal(self, signum: int, _frame: FrameType | None) -> None:
         log.info("event=signal signum=%s", signal.Signals(signum).name)

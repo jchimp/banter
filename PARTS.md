@@ -53,6 +53,31 @@ Prices are ballpark USD. `☐` = buy / check inventory.
 
 **Layout note:** the ribbon needs ~10 cm of slack routed between the Pi and the splitter, so plan for both boards lying flat rather than one on top of the other. The upside: the Codec Zero's on-board MEMS mic is no longer trapped under the Pi — mount that board mic-up against the panel mic port.
 
+## Variant — Pi 4 + USB audio
+
+A second supported build: no HAT at all, so the 40-pin header is free and the buttons
+and ring wire straight to it.
+
+| ☐ | Item | Notes | ~$ |
+|---|------|-------|----|
+| ☐ | Raspberry Pi 4 (2 GB is plenty) | Same GPIO17/22/10 assignments as the Zero build. | 45 |
+| ☐ | USB-C **3 A** PSU | The Pi 4 wants more than the Zero's 2.5 A micro-USB supply. | 10 |
+| ☐ | USB webcam (used as the mic) | Any UVC webcam with a mic. `plughw:` converts its native 48 kHz stereo to 16 kHz mono. | 15–30 |
+| ☐ | Powered USB speaker | Self-powered — don't run a speaker off the Pi's 5V rail alongside the ring. | 15–25 |
+
+Reuse from the Core list: microSD, buttons, quick-connects, NeoPixel ring + cap +
+resistor, enclosure, diffuser, jumpers.
+
+**Not needed for this variant:** the Codec Zero, the GPIO splitter, the ribbon, and
+the 8 Ω speaker — the USB devices replace all of it, and with no HAT there's nothing
+covering the header. `wiring.svg` still applies for the buttons and ring; just ignore
+its HAT and splitter blocks.
+
+**Config:** start from `client/.env.pi4.example`. The only real difference from the
+Zero profile is `BANTER_ALSA_CAPTURE` / `BANTER_ALSA_PLAYBACK`; use the stable
+`plughw:CARD=<name>,DEV=0` names from `arecord -L` / `aplay -L`, because two USB audio
+gadgets renumber across reboots.
+
 ## Total
 ~$105–115 new. Less whatever's already in your kit bins (SD, PSU, resistors, jumpers, box).
 
