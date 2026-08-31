@@ -217,7 +217,8 @@ CDN, so the page works with no outbound DNS.
 
 ## Client — on the Pi
 ```bash
-sudo apt install -y alsa-utils
+# alsa-utils for arecord/aplay; the rest are build deps for lgpio (see below).
+sudo apt install -y alsa-utils swig python3-dev build-essential liblgpio-dev
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 cd ~/banter/client
@@ -231,13 +232,60 @@ sudo systemctl enable --now banter-client
 journalctl -u banter-client -f
 ```
 
+Three things have to name the same account and the same paths: `User=` in
+`banter-client.service`, `WorkingDirectory=`/`EnvironmentFile=` in that unit, and
+`BANTER_QUEUE_DIR` / `BANTER_CACHE_DIR` in `.env`. The examples assume `pi` and a home
+directory; if you're a different user, or installed somewhere like `/opt/banter`, set
+all of them or startup dies on a `PermissionError` under `/home/pi`. For a system-wide
+install:
+
+```bash
+sudo install -d -o "$USER" -g "$USER" /var/lib/banter/queue /var/lib/banter/cache
+# BANTER_QUEUE_DIR=/var/lib/banter/queue   BANTER_CACHE_DIR=/var/lib/banter/cache
+```
+
+`lgpio` (pulled in by `--extra hardware` for gpiozero) has no wheels on PyPI, so uv
+builds it from source and you get this if the build deps are missing:
+
+```
+error: command 'swig' failed: No such file or directory      # needs swig
+/usr/bin/ld: cannot find -llgpio                             # needs liblgpio-dev
+```
+
+The sdist swigs a wrapper and links it against the *system* liblgpio, so it needs both
+the toolchain (`swig`, `python3-dev`, `build-essential`) and the library headers
+(`liblgpio-dev`). With all four installed the build takes about a minute, once per
+venv. Apt's `python3-lgpio` is not a shortcut: it lives outside uv's venv, and opening
+the venv up to system site-packages fights every later `uv sync`.
+
+The ring pulls in Adafruit Blinka, whose Pi 4 pin module imports `RPi.GPIO` — which is
+unmaintained, broken on Bookworm+ kernels and unbuildable on Python 3.13. The
+`hardware` extra therefore depends on **`rpi-lgpio`**, which provides that import on
+top of lgpio. Don't `pip install RPi.GPIO` when something asks for it (Blinka's own
+error message suggests exactly that): the two packages claim the same module name and
+installing both breaks the ring.
+
 ### Pi one-time system config
-`/boot/firmware/config.txt` — the NeoPixel ring runs on SPI (not PWM, which fights
-the onboard audio):
+The NeoPixel ring runs on SPI (not PWM, which fights the onboard audio), so
+`/boot/firmware/config.txt` needs:
 ```
 dtparam=spi=on
 core_freq_min=500
 ```
+
+```bash
+sudo raspi-config nonint do_spi 0                          # writes dtparam=spi=on
+echo 'core_freq_min=500' | sudo tee -a /boot/firmware/config.txt
+sudo reboot
+ls /dev/spidev*                                            # expect /dev/spidev0.0
+```
+
+Both need the reboot. Without them the ring backend dies at startup with
+`OSError: /dev/spidev0.0 does not exist`; `core_freq_min` only affects timing
+stability, so a ring that flickers or shows wrong colours means that line is missing.
+To bring the box up before you've dealt with SPI, set `BANTER_RING_BACKEND=null` and
+buttons and audio run without it.
+
 Codec Zero setup follows the official Raspberry Pi HAT instructions.
 
 ### Variant — Pi 4 with a USB mic and USB speaker
