@@ -1,0 +1,55 @@
+﻿# ---------------------------------------------
+#  .jrepoignore - JRepo exclusion rules
+#
+#  Pattern guide:
+#    /dirname      Directory  (leading /)
+#    dirname/      Directory  (trailing /)
+#    *.ext         Extension / wildcard file
+#    name.ext      Specific file (has a dot)
+#    name          Ambiguous -> excluded as both dir AND file
+#
+#  Lines starting with # are comments.
+#  Blank lines are ignored.
+# ---------------------------------------------
+
+# Python
+*.pyc
+/__pycache__
+
+# Node
+/node_modules
+
+# Virtual environments
+/.venv
+/venv
+
+# Environment / secrets
+.env
+*.key
+*.crt
+*.pem
+
+# Logs
+*.log
+
+# Temp files
+*.tmp
+*~
+*.old
+
+# OS junk
+Thumbs.db
+.DS_Store
+
+# Version control
+/.git
+/.svn
+
+# Data & build directories
+/data
+/dist
+/build
+/.vscode
+
+# Docker volumes
+/volumes
