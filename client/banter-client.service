@@ -4,6 +4,9 @@ After=network-online.target sound.target
 Wants=network-online.target
 
 [Service]
+# User and paths assume the `pi` account. A Pi 4 image's default user is whatever
+# Imager was told, so User=, WorkingDirectory=, EnvironmentFile= and the uv path
+# all have to be changed together to match it (and BANTER_QUEUE_DIR/_CACHE_DIR).
 Type=simple
 User=pi
 WorkingDirectory=/home/pi/banter/client

@@ -37,7 +37,8 @@ in all of them.
 
 | Profile | audio | buttons | ring | Use |
 |---|---|---|---|---|
-| Pi | `alsa` | `gpio` | `neopixel` | The real box |
+| Pi Zero | `alsa` | `gpio` | `neopixel` | The real box — Codec Zero HAT |
+| Pi 4 | `alsa` | `gpio` | `neopixel` | The real box — USB webcam mic + USB speaker |
 | Laptop | `sounddevice` | `keyboard` | `terminal` | Real mic/speakers, keys for buttons |
 | CI | `synthetic` | `keyboard` | `null` | No audio device at all |
 
@@ -216,11 +217,12 @@ CDN, so the page works with no outbound DNS.
 
 ## Client — on the Pi
 ```bash
-sudo apt install -y alsa-utils
+# alsa-utils for arecord/aplay; the rest are build deps for lgpio (see below).
+sudo apt install -y alsa-utils swig python3-dev build-essential liblgpio-dev
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 cd ~/banter/client
-cp .env.example .env          # set BANTER_API_URL + BANTER_API_KEY
+cp .env.example .env          # Pi 4 + USB audio? use .env.pi4.example instead
 arecord -l && aplay -l        # fill in BANTER_ALSA_CAPTURE / _PLAYBACK
 uv sync --extra hardware      # gpiozero + neopixel; omit --extra off-hardware
 uv run banter-client          # hold BTN1 to record; runs until SIGINT/SIGTERM
@@ -230,14 +232,89 @@ sudo systemctl enable --now banter-client
 journalctl -u banter-client -f
 ```
 
+Three things have to name the same account and the same paths: `User=` in
+`banter-client.service`, `WorkingDirectory=`/`EnvironmentFile=` in that unit, and
+`BANTER_QUEUE_DIR` / `BANTER_CACHE_DIR` in `.env`. The examples assume `pi` and a home
+directory; if you're a different user, or installed somewhere like `/opt/banter`, set
+all of them or startup dies on a `PermissionError` under `/home/pi`. For a system-wide
+install:
+
+```bash
+sudo install -d -o "$USER" -g "$USER" /var/lib/banter/queue /var/lib/banter/cache
+# BANTER_QUEUE_DIR=/var/lib/banter/queue   BANTER_CACHE_DIR=/var/lib/banter/cache
+```
+
+`lgpio` (pulled in by `--extra hardware` for gpiozero) has no wheels on PyPI, so uv
+builds it from source and you get this if the build deps are missing:
+
+```
+error: command 'swig' failed: No such file or directory      # needs swig
+/usr/bin/ld: cannot find -llgpio                             # needs liblgpio-dev
+```
+
+The sdist swigs a wrapper and links it against the *system* liblgpio, so it needs both
+the toolchain (`swig`, `python3-dev`, `build-essential`) and the library headers
+(`liblgpio-dev`). With all four installed the build takes about a minute, once per
+venv. Apt's `python3-lgpio` is not a shortcut: it lives outside uv's venv, and opening
+the venv up to system site-packages fights every later `uv sync`.
+
+The ring pulls in Adafruit Blinka, whose Pi 4 pin module imports `RPi.GPIO` — which is
+unmaintained, broken on Bookworm+ kernels and unbuildable on Python 3.13. The
+`hardware` extra therefore depends on **`rpi-lgpio`**, which provides that import on
+top of lgpio. Don't `pip install RPi.GPIO` when something asks for it (Blinka's own
+error message suggests exactly that): the two packages claim the same module name and
+installing both breaks the ring.
+
 ### Pi one-time system config
-`/boot/firmware/config.txt` — the NeoPixel ring runs on SPI (not PWM, which fights
-the onboard audio):
+The NeoPixel ring runs on SPI (not PWM, which fights the onboard audio), so
+`/boot/firmware/config.txt` needs:
 ```
 dtparam=spi=on
 core_freq_min=500
 ```
+
+```bash
+sudo raspi-config nonint do_spi 0                          # writes dtparam=spi=on
+echo 'core_freq_min=500' | sudo tee -a /boot/firmware/config.txt
+sudo reboot
+ls /dev/spidev*                                            # expect /dev/spidev0.0
+```
+
+Both need the reboot. Without them the ring backend dies at startup with
+`OSError: /dev/spidev0.0 does not exist`; `core_freq_min` only affects timing
+stability, so a ring that flickers or shows wrong colours means that line is missing.
+To bring the box up before you've dealt with SPI, set `BANTER_RING_BACKEND=null` and
+buttons and audio run without it.
+
 Codec Zero setup follows the official Raspberry Pi HAT instructions.
+
+### Variant — Pi 4 with a USB mic and USB speaker
+Same client, same pins, same two commands: only the two ALSA device strings change.
+Start from `client/.env.pi4.example`.
+
+```bash
+arecord -L        # capture PCMs — take the plughw:CARD=<name>,DEV=0 line for the webcam
+aplay -L          # playback PCMs — same for the speaker
+```
+
+Use the `CARD=` form, not `plughw:1,0`. With two USB audio gadgets the card *indices*
+renumber across reboots, and pointing capture at the wrong one is quiet: `arecord`
+writes nothing, the clip fails the duration check and is discarded, and the kid's joke
+just disappears. The client checks both devices at startup and logs
+
+```
+ERROR | banter.client | event=alsa_device_missing which=capture configured='plughw:9,0' not found; cards=1:Webcam, 2:Speaker
+```
+
+It logs and keeps running rather than exiting — a restart loop over a typo would be
+worse. `plughw:` (not `hw:`) matters on both: it converts the webcam's native 48 kHz
+stereo to the 16 kHz mono the server expects.
+
+The ring is unchanged — GPIO10/SPI0, so `dtparam=spi=on` and `core_freq_min=500` still
+apply. With no HAT covering the header the buttons and ring wire straight to it, so
+none of the splitter hardware in `PARTS.md` is needed. Watch the account name: a Pi 4
+image's default user is whatever Imager was told, and `banter-client.service` plus
+`BANTER_QUEUE_DIR` / `BANTER_CACHE_DIR` all assume `pi`.
 
 ## API
 Implemented so far (full contract in `PRD.md` §5). All `/api/*` require header

@@ -2,6 +2,7 @@
 
 import pytest
 
+from banter_client.__main__ import dir_problem
 from banter_client.config import ClientSettings
 from banter_client.state import State, StateMachine
 
@@ -57,3 +58,20 @@ def test_button_modes_accepted(mode):
 
 def test_default_heartbeat_interval():
     assert ClientSettings(_env_file=None).heartbeat_interval_seconds == 60.0
+
+
+# ------------------------------------------------- data dir preflight (main())
+def test_dir_problem_creates_missing_dir(tmp_path):
+    target = tmp_path / "queue" / "nested"
+    assert dir_problem(target) is None
+    assert target.is_dir()
+
+
+def test_dir_problem_reports_unusable_path(tmp_path):
+    # A file where a directory should be: mkdir raises, and the caller gets a message
+    # naming the path instead of a traceback out of RecordingQueue.
+    blocker = tmp_path / "queue"
+    blocker.write_text("not a dir")
+    problem = dir_problem(blocker / "sub")
+    assert problem is not None
+    assert str(blocker) in problem

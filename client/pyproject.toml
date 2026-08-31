@@ -15,6 +15,10 @@ hardware = [
     "gpiozero>=2.0.1",
     "lgpio>=0.2.2.0",
     "adafruit-circuitpython-neopixel-spi>=1.0.5",
+    # Blinka's Pi 4 pin module imports RPi.GPIO, which is dead on Bookworm+ kernels
+    # and doesn't build on 3.13. rpi-lgpio provides that module name on top of lgpio.
+    # Never install RPi.GPIO alongside it — they claim the same import.
+    "rpi-lgpio>=0.6",
 ]
 # Laptop/dev-box audio via PortAudio. Works on Linux, macOS and Windows.
 dev-audio = [

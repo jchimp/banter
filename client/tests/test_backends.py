@@ -8,7 +8,14 @@ from pathlib import Path
 
 import pytest
 
-from banter_client.backends.audio import SyntheticAudio, aplay_cmd, arecord_cmd
+from banter_client.backends.audio import (
+    SyntheticAudio,
+    alsa_device_ok,
+    aplay_cmd,
+    arecord_cmd,
+    parse_cards,
+    parse_pcm_names,
+)
 from banter_client.backends.base import AudioBackend, ButtonBackend, ButtonCallbacks, RingBackend
 from banter_client.backends.factory import make_audio, make_buttons, make_ring
 from banter_client.backends.io import NullRing
@@ -43,6 +50,61 @@ def test_arecord_cmd_shape():
 
 def test_aplay_cmd_shape():
     assert aplay_cmd("plughw:1,0", "/tmp/a.wav") == ["aplay", "-D", "plughw:1,0", "/tmp/a.wav"]
+
+
+# ------------------------------------------------------- alsa device preflight
+# Trimmed but verbatim-shaped output from a Pi 4 with a USB webcam + USB speaker.
+ARECORD_L = """null
+    Discard all samples (playback) or generate zero samples (capture)
+plughw:CARD=Webcam,DEV=0
+    USB Webcam, USB Audio
+    Hardware device with all software conversions
+sysdefault:CARD=Webcam
+    USB Webcam, USB Audio
+"""
+
+ARECORD_l = """**** List of CAPTURE Hardware Devices ****
+card 1: Webcam [USB Webcam], device 0: USB Audio [USB Audio]
+  Subdevices: 1/1
+  Subdevice #0: subdevice #0
+card 2: Speaker [USB Speaker], device 0: USB Audio [USB Audio]
+"""
+
+
+def test_parse_pcm_names_takes_unindented_lines():
+    assert parse_pcm_names(ARECORD_L) == [
+        "null",
+        "plughw:CARD=Webcam,DEV=0",
+        "sysdefault:CARD=Webcam",
+    ]
+
+
+def test_parse_cards_maps_index_to_name():
+    assert parse_cards(ARECORD_l) == {1: "Webcam", 2: "Speaker"}
+
+
+@pytest.mark.parametrize(
+    ("device", "expected"),
+    [
+        ("plughw:CARD=Webcam,DEV=0", True),  # exact PCM name from -L
+        ("sysdefault:CARD=Webcam", True),
+        ("plughw:1,0", True),  # by card index
+        ("hw:2,0", True),
+        ("plughw:CARD=Speaker,DEV=0", True),  # by card name, not listed in -L
+        ("plughw:7,0", False),  # no such card
+        ("plughw:CARD=CodecZero,DEV=0", False),  # HAT profile's device on a USB box
+        ("gibberish", False),
+    ],
+)
+def test_alsa_device_ok(device, expected):
+    pcms, cards = parse_pcm_names(ARECORD_L), parse_cards(ARECORD_l)
+    assert alsa_device_ok(device, pcms, cards) is expected
+
+
+def test_alsa_device_ok_with_empty_listings_rejects():
+    # check_alsa_devices skips the check entirely when both listings are empty; this
+    # just pins the pure function's own behaviour.
+    assert alsa_device_ok("plughw:1,0", [], {}) is False
 
 
 # ------------------------------------------------------------------- factory

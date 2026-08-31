@@ -7,11 +7,14 @@ idle until SIGINT/SIGTERM.
 """
 
 import logging
+import os
 import signal
 import sys
 import threading
+from pathlib import Path
 from types import FrameType
 
+from banter_client.backends.audio import check_alsa_devices
 from banter_client.backends.base import ButtonCallbacks
 from banter_client.backends.factory import describe, make_buttons
 from banter_client.config import ClientSettings, get_settings
@@ -73,6 +76,8 @@ class App:
             recovered,
         )
 
+        self._check_audio_devices()
+
         self.uploader.start()
         self.heartbeat.start()
         self.buttons.start()
@@ -90,14 +95,52 @@ class App:
         log.info("event=bye")
         return 0
 
+    def _check_audio_devices(self) -> None:
+        """Warn loudly if the configured ALSA devices aren't there.
+
+        Logged, not fatal: the unit restarts on failure, and a restart loop over a
+        typo'd device name is worse than a box that boots and says what's wrong.
+        """
+        if self.s.audio_backend != "alsa":
+            return
+        for problem in check_alsa_devices(self.s.alsa_capture, self.s.alsa_playback):
+            log.error("event=alsa_device_missing %s", problem)
+
     def _on_signal(self, signum: int, _frame: FrameType | None) -> None:
         log.info("event=signal signum=%s", signal.Signals(signum).name)
         self._done.set()
 
 
+def dir_problem(path: Path) -> str | None:
+    """Why `path` can't serve as a data dir, or None if it's fine.
+
+    Separate from the queue/cache constructors so the failure is one legible log line
+    instead of a mkdir traceback in journalctl. The paths come from .env and routinely
+    name another user's home — the templates ship `/home/pi` and a `<user>`
+    placeholder — so this is the first thing a fresh install gets wrong.
+    """
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return f"path={path} error={exc.strerror or exc}"
+    if not os.access(path, os.W_OK):
+        return f"path={path} error=exists but is not writable by this user"
+    return None
+
+
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(name)s | %(message)s")
-    return App(get_settings()).run()
+    s = get_settings()
+    problems = [p for p in (dir_problem(s.queue_dir), dir_problem(s.cache_dir)) if p]
+    if problems:
+        for problem in problems:
+            log.error("event=data_dir_unusable %s", problem)
+        log.error(
+            "event=fatal hint=set BANTER_QUEUE_DIR and BANTER_CACHE_DIR to paths this "
+            "user owns (see README, 'Client — on the Pi')"
+        )
+        return 2
+    return App(s).run()
 
 
 if __name__ == "__main__":

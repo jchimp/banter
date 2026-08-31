@@ -2,6 +2,7 @@
 
 import logging
 import math
+import re
 import struct
 import subprocess
 import threading
@@ -24,6 +25,82 @@ def arecord_cmd(device: str, rate: int, max_seconds: int, path: Path) -> list[st
 def aplay_cmd(device: str, path: Path) -> list[str]:
     """Pure: build the playback command."""
     return ["aplay", "-D", device, str(path)]
+
+
+# ----------------------------------------------------------------- preflight
+# A wrong ALSA device string fails quietly: arecord exits, the controller probes a
+# missing/header-only WAV and discards it (FR-3), and every joke the kid records
+# vanishes with nothing but `captured=0.00` to go on. That is easy to hit on the
+# Pi 4 + USB profile, where card indices renumber across reboots. These parse the
+# ALSA listings so startup can say which device is wrong and what exists instead.
+
+
+def parse_pcm_names(listing: str) -> list[str]:
+    """Pure: PCM names from `arecord -L` / `aplay -L`. Names are the unindented lines."""
+    return [line.strip() for line in listing.splitlines() if line and not line[0].isspace()]
+
+
+def parse_cards(listing: str) -> dict[int, str]:
+    """Pure: index -> card name from `arecord -l` / `aplay -l`.
+
+    Lines look like: `card 1: Webcam [USB Webcam], device 0: USB Audio [USB Audio]`.
+    """
+    cards: dict[int, str] = {}
+    for line in listing.splitlines():
+        m = re.match(r"card (\d+): (\S+)", line.strip())
+        if m:
+            cards[int(m.group(1))] = m.group(2)
+    return cards
+
+
+def alsa_device_ok(device: str, pcms: list[str], cards: dict[int, str]) -> bool:
+    """Pure: does `device` name something ALSA is currently offering?
+
+    Accepts the three forms people actually write: a full PCM name from `-L`,
+    `hw:N,M` / `plughw:N,M` by card index, and `...CARD=name...` by card name.
+    """
+    if device in pcms:
+        return True
+    m = re.match(r"(?:plug)?hw:(\d+)", device)
+    if m:
+        return int(m.group(1)) in cards
+    m = re.search(r"CARD=([^,]+)", device)
+    if m:
+        return m.group(1) in cards.values()
+    return False
+
+
+def _alsa_listing(tool: str, flag: str) -> str:
+    """Impure: run `arecord|aplay -L|-l`. Empty string if the tool is missing."""
+    try:
+        out = subprocess.run([tool, flag], capture_output=True, text=True, timeout=10, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        log.warning("event=alsa_listing_failed tool=%s flag=%s err=%s", tool, flag, exc)
+        return ""
+    return out.stdout
+
+
+def check_alsa_devices(capture: str, playback: str) -> list[str]:
+    """Impure: report configured ALSA devices that don't currently exist.
+
+    Returns one message per problem, each naming the bad value and the alternatives,
+    so the caller can log it. An empty list means both devices resolve. If the ALSA
+    tools produce nothing (not installed, no sound cards yet) we report nothing
+    rather than crying wolf.
+    """
+    problems: list[str] = []
+    for which, device, tool in (("capture", capture, "arecord"), ("playback", playback, "aplay")):
+        pcms = parse_pcm_names(_alsa_listing(tool, "-L"))
+        cards = parse_cards(_alsa_listing(tool, "-l"))
+        if not pcms and not cards:
+            continue
+        if not alsa_device_ok(device, pcms, cards):
+            available = ", ".join(f"{i}:{n}" for i, n in sorted(cards.items())) or "none"
+            problems.append(
+                f"which={which} configured={device!r} not found; "
+                f"cards={available} (run `{tool} -L` for the stable CARD= names)"
+            )
+    return problems
 
 
 class AlsaAudio:
