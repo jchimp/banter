@@ -1,9 +1,9 @@
 # Project Progress
 
 ## Current Focus
-M4 (web UI) is built on `m4-web-ui`: recording list with source filter, soft-delete/undo,
-read-only device panel, and device heartbeat. Outstanding: M3's end-to-end pass against
-a real bot token, and M1's hardware pass on the Pi.
+M4 is merged to `main`. Bringing up the first real device — a Pi 4 with USB webcam mic +
+USB speaker (`pi4-usb-audio`, merged) — currently stuck at "client starts"; nothing of
+the record/play loop is exercised on hardware yet.
 
 ## Open Todos
 - [x] M0 — skeleton, config, migrations, healthz, test harness
@@ -25,9 +25,34 @@ a real bot token, and M1's hardware pass on the Pi.
 - [x] M4 — `GET /ui/recordings/{id}/audio` unauthenticated audio route + shared
       path-escape guard (`app.audio.resolve_playable_audio`)
 - [x] M4 — `POST /api/devices/{id}/heartbeat` + client heartbeat thread
-- [ ] Merge `m4-web-ui` into `main`
+- [x] Merge `m4-web-ui` into `main` (PR #3)
+- [x] Pi 4 + USB audio as a second supported build: `.env.pi4.example`, ALSA device
+      preflight, data-dir preflight, setup docs (PR #4)
+- [ ] Pi 4 bring-up: confirm the webcam/speaker device strings record and play a clip
+- [ ] Pi 4 bring-up: buttons on GPIO17/22, then the NeoPixel ring once SPI is enabled
+- [ ] Decide whether the Codec Zero build is still happening, or the Pi 4 is the box
 
 ## Progress Log
+
+### 2026-08-30 (Pi 4 bring-up)
+- Corrected the parts list: the Codec Zero's 2×20 socket is not pass-through, so a
+  stacking header can't reach GPIO17/22/10. Swapped to a GPIO splitter + short ribbon,
+  redrew `wiring.svg`, and noted the ribbon length limit (I²S clock).
+- Added a Pi 4 + USB webcam/speaker profile as a *second* supported build, not a
+  replacement: `client/.env.pi4.example` plus README/PARTS/CLAUDE variants. The client
+  needed no changes for it — capture and playback were already independent config.
+- Added two startup preflights, both driven by real failures during bring-up: ALSA
+  devices (logs and continues; a restart loop over a typo is worse than a diagnosis) and
+  queue/cache dirs (exits 2 — there's no useful degraded mode without a queue).
+- Pi 4 install fought back in four rounds, all now documented in the README: `lgpio` has
+  no PyPI wheels (needs swig + `liblgpio-dev`), Blinka wants `RPi.GPIO` (use `rpi-lgpio`,
+  never both), SPI needs enabling + reboot, and `.env` data dirs must match the service
+  user — an `/opt` install with a non-`pi` account trips all of it.
+- Decided: prefer `plughw:CARD=<name>,DEV=0` over `plughw:1,0`. Two USB audio gadgets
+  renumber across reboots, and pointing capture at the wrong card fails silently — the
+  clip just gets discarded. That's the whole reason the ALSA preflight exists.
+- Next: get past client startup on the Pi 4 and actually record/play a clip; M3's
+  end-to-end pass against a real bot token is still outstanding.
 
 ### 2026-08-14 (M4)
 - M4 shipped on `m4-web-ui`: web UI (`/`, `/ui/recordings` HTMX partial, soft-delete/undo,
