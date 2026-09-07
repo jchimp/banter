@@ -74,7 +74,13 @@ def probe_duration_ms(path: Path) -> int:
     try:
         with wave.open(str(path), "rb") as wf:
             rate = wf.getframerate() or 1
-            return int(1000 * wf.getnframes() / rate)
+            framesize = (wf.getnchannels() or 1) * (wf.getsampwidth() or 1)
+            # Don't trust getnframes() alone — it comes from the header, and arecord
+            # pre-writes the header for the full `-d` duration, correcting it only on
+            # a clean exit. A SIGKILLed capture (stalled ALSA device) leaves a header
+            # claiming 60s over an empty data chunk. Count the bytes actually there.
+            frames = len(wf.readframes(wf.getnframes())) // framesize
+            return int(1000 * frames / rate)
     except (wave.Error, OSError, EOFError):
         return 0
 
