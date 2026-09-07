@@ -1,4 +1,4 @@
-<svg viewBox="0 0 1080 760" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace, 'JetBrains Mono', Menlo, monospace">
+<svg viewBox="0 0 1080 780" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace, 'JetBrains Mono', Menlo, monospace">
   <style>
     .bg{fill:#0f141a}
     .panel{fill:#1a2129;stroke:#2c3742;stroke-width:1.5}
@@ -17,7 +17,7 @@
     .dot5{fill:#f0616d}.dotg{fill:#7c8794}.dotd{fill:#4ade80}.dotb{fill:#60a5fa}
   </style>
 
-  <rect class="bg" x="0" y="0" width="1080" height="760"/>
+  <rect class="bg" x="0" y="0" width="1080" height="780"/>
   <text class="title" x="30" y="42">Banter / kidbox — wiring (Pi Zero 2 W + Codec Zero)</text>
   <text class="sub" x="30" y="64">Mic, speaker amp and a spare button live on the HAT. You wire only: 2 arcade buttons, 1 NeoPixel ring, 1 speaker.</text>
   <text class="sub" x="30" y="84">The HAT's socket is not pass-through, so it and your wiring each get one side of a GPIO splitter.</text>
@@ -71,37 +71,45 @@
   <text class="tiny" x="618" y="708">GND</text>
 
   <!-- BTN1 -->
-  <rect class="panel" x="716" y="240" width="250" height="66" rx="10"/>
-  <text class="lbls" x="731" y="264">BTN 1 · Record (green)</text>
-  <text class="tiny" x="731" y="282">switch lug → GPIO17</text>
-  <text class="tiny" x="731" y="298">switch lug → GND    (LED lugs separate)</text>
-  <circle class="dotb" cx="708" cy="262" r="5"/><circle class="dotg" cx="708" cy="288" r="5"/>
-  <path class="wb" d="M556 273 H708"/><path class="wg" d="M630 288 H708"/>
+  <rect class="panel" x="716" y="240" width="250" height="104" rx="10"/>
+  <text class="lbls" x="731" y="262">BTN 1 · Record (green)</text>
+  <text class="tiny" x="731" y="279">switch lug → GPIO17</text>
+  <text class="tiny" x="731" y="295">switch lug → GND</text>
+  <text class="tiny" x="731" y="311">LED + → 5V</text>
+  <text class="tiny" x="731" y="327">LED − → GND</text>
+  <circle class="dotb" cx="708" cy="275" r="5"/><circle class="dotg" cx="708" cy="291" r="5"/>
+  <circle class="dot5" cx="708" cy="307" r="5"/><circle class="dotg" cx="708" cy="323" r="5"/>
+  <path class="wb" d="M556 273 H690 V275 H708"/><path class="wg" d="M630 291 H708"/>
+  <path class="w5" d="M606 307 H708"/><path class="wg" d="M630 323 H708"/>
 
   <!-- BTN2 -->
-  <rect class="panel" x="716" y="322" width="250" height="66" rx="10"/>
-  <text class="lbls" x="731" y="346">BTN 2 · Play (blue)</text>
-  <text class="tiny" x="731" y="364">switch lug → GPIO22</text>
-  <text class="tiny" x="731" y="380">switch lug → GND</text>
-  <circle class="dotb" cx="708" cy="344" r="5"/><circle class="dotg" cx="708" cy="370" r="5"/>
-  <path class="wb" d="M556 333 H708"/><path class="wg" d="M630 370 H708"/>
+  <rect class="panel" x="716" y="356" width="250" height="104" rx="10"/>
+  <text class="lbls" x="731" y="378">BTN 2 · Play (blue)</text>
+  <text class="tiny" x="731" y="395">switch lug → GPIO22</text>
+  <text class="tiny" x="731" y="411">switch lug → GND</text>
+  <text class="tiny" x="731" y="427">LED + → 5V</text>
+  <text class="tiny" x="731" y="443">LED − → GND</text>
+  <circle class="dotb" cx="708" cy="391" r="5"/><circle class="dotg" cx="708" cy="407" r="5"/>
+  <circle class="dot5" cx="708" cy="423" r="5"/><circle class="dotg" cx="708" cy="439" r="5"/>
+  <path class="wb" d="M556 333 H688 V391 H708"/><path class="wg" d="M630 407 H708"/>
+  <path class="w5" d="M606 423 H708"/><path class="wg" d="M630 439 H708"/>
 
   <!-- RING -->
-  <rect class="panel" x="716" y="406" width="250" height="150" rx="10"/>
-  <text class="lbls" x="731" y="430">NeoPixel Ring 16 (status glow)</text>
-  <circle cx="880" cy="500" r="30" fill="none" stroke="#4ade80" stroke-width="6" stroke-dasharray="3 6"/>
-  <text class="tiny" x="731" y="462">DIN</text><text class="tiny" x="731" y="490">5V</text><text class="tiny" x="731" y="518">GND</text>
-  <text class="tiny" x="731" y="544">behind 45mm diffuser</text>
-  <circle class="dotd" cx="708" cy="458" r="5"/><circle class="dot5" cx="708" cy="486" r="5"/><circle class="dotg" cx="708" cy="514" r="5"/>
+  <rect class="panel" x="716" y="472" width="250" height="150" rx="10"/>
+  <text class="lbls" x="731" y="496">NeoPixel Ring 16 (status glow)</text>
+  <circle cx="880" cy="566" r="30" fill="none" stroke="#4ade80" stroke-width="6" stroke-dasharray="3 6"/>
+  <text class="tiny" x="731" y="528">DIN</text><text class="tiny" x="731" y="556">5V</text><text class="tiny" x="731" y="584">GND</text>
+  <text class="tiny" x="731" y="610">behind 45mm diffuser</text>
+  <circle class="dotd" cx="708" cy="524" r="5"/><circle class="dot5" cx="708" cy="552" r="5"/><circle class="dotg" cx="708" cy="580" r="5"/>
   <path class="wd" d="M556 425 H632"/>
   <rect x="632" y="418" width="42" height="14" fill="#11181f" stroke="#4ade80"/>
   <text class="tiny" x="637" y="414">470Ω</text>
-  <path class="wd" d="M674 425 H694 V458 H708"/>
-  <path class="w5" d="M606 486 H708"/>
-  <path class="wg" d="M630 514 H708"/>
-  <rect x="608" y="560" width="46" height="16" fill="#11181f" stroke="#8b98a5"/>
-  <text class="tiny" x="611" y="572">1000µF</text>
-  <path class="w5" d="M616 560 V551"/><path class="wg" d="M644 560 V551"/>
+  <path class="wd" d="M674 425 H694 V524 H708"/>
+  <path class="w5" d="M606 552 H708"/>
+  <path class="wg" d="M630 580 H708"/>
+  <rect x="608" y="636" width="46" height="16" fill="#11181f" stroke="#8b98a5"/>
+  <text class="tiny" x="611" y="648">1000µF</text>
+  <path class="w5" d="M616 636 V627"/><path class="wg" d="M644 636 V627"/>
 
   <!-- SPEAKER -->
   <rect class="panel" x="300" y="560" width="210" height="76" rx="10"/>
@@ -111,17 +119,19 @@
   <path d="M258 268 C 292 268, 288 580, 300 592" fill="none" stroke="#2dd4bf" stroke-width="3"/>
 
   <!-- LEGEND -->
-  <rect class="panel" x="30" y="560" width="250" height="120" rx="10"/>
+  <rect class="panel" x="30" y="560" width="250" height="132" rx="10"/>
   <text class="lbls" x="45" y="584">Legend</text>
   <line x1="45" y1="602" x2="75" y2="602" class="w5"/><text class="tiny" x="82" y="606">5V</text>
   <line x1="140" y1="602" x2="170" y2="602" class="wg"/><text class="tiny" x="177" y="606">GND</text>
-  <line x1="45" y1="626" x2="75" y2="626" class="wb"/><text class="tiny" x="82" y="630">GPIO in (button → GND)</text>
-  <line x1="45" y1="650" x2="75" y2="650" class="wd"/><text class="tiny" x="82" y="654">NeoPixel data</text>
-  <text class="tiny" x="45" y="672">Buttons use internal pull-ups: no resistors.</text>
+  <line x1="45" y1="622" x2="75" y2="622" class="wb"/><text class="tiny" x="82" y="626">GPIO in (button → GND)</text>
+  <line x1="45" y1="642" x2="75" y2="642" class="wd"/><text class="tiny" x="82" y="646">NeoPixel data</text>
+  <text class="tiny" x="45" y="666">Switch lugs: internal pull-ups, no resistor.</text>
+  <text class="tiny" x="45" y="682">5V NEVER touches a switch lug — LED only.</text>
 
   <!-- NOTES -->
-  <rect class="panel" x="30" y="700" width="1020" height="44" rx="10"/>
-  <text class="tiny" x="45" y="720">RESERVED — do not reuse: GPIO2/3 (I2C), GPIO18/19/20/21 (I2S audio), GPIO27 (HAT button), GPIO23/24 (HAT LEDs).  Free spares: GPIO5, 6, 12, 13, 16, 25.</text>
-  <text class="tiny" x="45" y="736">Keep the ribbon ≤10 cm (I²S clock); the splitter passes ID_SD/ID_SC through, so the HAT still self-detects.</text>
-  <text class="tiny" x="45" y="752">Ring on SPI0 needs  dtparam=spi=on  and  core_freq_min=500  in /boot/firmware/config.txt.   Halo variant: chain ring B DIN ← ring A DOUT, same GPIO10.</text>
+  <rect class="panel" x="30" y="700" width="1020" height="64" rx="10"/>
+  <text class="tiny" x="45" y="718">RESERVED — do not reuse: GPIO2/3 (I2C), GPIO18/19/20/21 (I2S audio), GPIO27 (HAT button), GPIO23/24 (HAT LEDs).  Free spares: GPIO5, 6, 12, 13, 16, 25.</text>
+  <text class="tiny" x="45" y="733">Keep the ribbon ≤10 cm (I²S clock); the splitter passes ID_SD/ID_SC through, so the HAT still self-detects.</text>
+  <text class="tiny" x="45" y="748">Ring on SPI0 needs  dtparam=spi=on  and  core_freq_min=500  in /boot/firmware/config.txt.   Halo variant: chain ring B DIN ← ring A DOUT, same GPIO10.</text>
+  <text class="tiny" x="45" y="763">Button LEDs: buy the 5V variant (built-in resistor) and wire direct. Bare LED: add 150–220Ω in the 5V leg. A 12V variant is merely dim at 5V, not damaged.</text>
 </svg>
