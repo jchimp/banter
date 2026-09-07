@@ -16,8 +16,10 @@ log = logging.getLogger("banter.audio")
 
 def arecord_cmd(device: str, rate: int, max_seconds: int, path: Path) -> list[str]:
     """Pure: build the capture command. Kept separate so it is unit-testable."""
+    # -q suppresses the "Recording WAVE ..." banner (which goes to stderr), so that
+    # anything arecord writes to stderr is an actual error worth logging.
     return [
-        "arecord", "-D", device, "-f", "S16_LE", "-r", str(rate),
+        "arecord", "-q", "-D", device, "-f", "S16_LE", "-r", str(rate),
         "-c", "1", "-d", str(max_seconds), str(path),
     ]  # fmt: skip
 
@@ -119,23 +121,35 @@ class AlsaAudio:
             return
         path.parent.mkdir(parents=True, exist_ok=True)
         self._started = time.monotonic()
+        # stderr is kept: with -q the banner is gone, so anything on stderr is a real
+        # ALSA complaint (wrong device, stalled capture) worth having in journald.
         self._rec = subprocess.Popen(
             arecord_cmd(self.capture, self.rate, self.max_seconds, path),
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
         )
 
     def stop_record(self) -> float:
         if not self._rec:
             return 0.0
+        proc, self._rec = self._rec, None
         # arecord does not stop politely; escalate. (CLAUDE.md gotcha 3)
-        self._rec.terminate()
+        proc.terminate()
         try:
-            self._rec.wait(timeout=2)
+            proc.wait(timeout=2)
         except subprocess.TimeoutExpired:
-            self._rec.kill()
-            self._rec.wait(timeout=2)
-        self._rec = None
+            # A capture that has to be SIGKILLed never got a frame from ALSA — the
+            # file on disk is header-only even if its header claims otherwise.
+            log.warning("event=arecord_killed device=%s", self.capture)
+            proc.kill()
+            proc.wait(timeout=2)
+        stderr = proc.stderr.read() if proc.stderr else b""
+        if stderr:
+            log.warning(
+                "event=arecord_stderr device=%s msg=%s",
+                self.capture,
+                stderr.decode(errors="replace").strip(),
+            )
         return time.monotonic() - self._started
 
     def play(self, path: Path, on_done: Callable[[], None] | None = None) -> None:
