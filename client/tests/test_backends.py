@@ -117,6 +117,21 @@ def test_factory_selects_simulated_backends(sim_settings):
     assert isinstance(buttons, ButtonBackend)
 
 
+def test_neopixel_ring_falls_back_when_hardware_is_absent(sim_settings, caplog):
+    """SPI off / no Blinka must degrade to NullRing, not kill the process.
+
+    Needs no mocking: off-Pi the `import board` inside NeoPixelRing already fails, which
+    is exactly the failure this guards. Unguarded it propagates out of App.__init__ and
+    systemd's start limit turns it into a permanently dead unit.
+    """
+    s = sim_settings.model_copy(update={"ring_backend": "neopixel"})
+    with caplog.at_level("ERROR"):
+        ring = make_ring(s)
+    assert isinstance(ring, NullRing)
+    assert isinstance(ring, RingBackend)
+    assert "event=ring_unavailable" in caplog.text
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [("audio_backend", "bogus"), ("button_backend", "bogus"), ("ring_backend", "bogus")],
