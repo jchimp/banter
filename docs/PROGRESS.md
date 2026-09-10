@@ -29,7 +29,8 @@ Working around or replacing that mic is the gate.
 - [x] Pi 4 + USB audio as a second supported build: `.env.pi4.example`, ALSA device
       preflight, data-dir preflight, setup docs (PR #4)
 - [ ] Pi 4 bring-up: confirm the webcam/speaker device strings record and play a clip
-- [ ] Pi 4 bring-up: buttons on GPIO17/22, then the NeoPixel ring once SPI is enabled
+- [x] Pi 4 bring-up: buttons working — BTN1 on GPIO17, BTN2 relocated to GPIO27
+- [ ] Pi 4 bring-up: NeoPixel ring once SPI is enabled (ring backend is `null` until then)
 - [ ] Decide whether the Codec Zero build is still happening, or the Pi 4 is the box
 - [ ] Pi 4: get a working mic — try C960 at 48 kHz, check the UACDemoV10 dongle for a
       capture side, try a USB 2.0 hub; else replace the webcam mic

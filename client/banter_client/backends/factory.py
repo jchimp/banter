@@ -45,7 +45,22 @@ def make_buttons(s: ClientSettings, callbacks: ButtonCallbacks) -> ButtonBackend
 def make_ring(s: ClientSettings) -> RingBackend:
     match s.ring_backend:
         case "neopixel":
-            return NeoPixelRing(s.ring_pixels, s.led_max_brightness)
+            try:
+                return NeoPixelRing(s.ring_pixels, s.led_max_brightness)
+            except Exception as exc:
+                # NeoPixelRing does `import board; board.SPI()`, which raises when SPI
+                # is off, Blinka is missing, or /dev/spidev* isn't there. Unguarded that
+                # kills App.__init__ before a single log line, and the unit's
+                # Restart=on-failure then burns systemd's start limit in ~15s and gives
+                # up for good. A box with no ring is degraded; a box that won't boot and
+                # won't say why is a service call.
+                log.error(
+                    "event=ring_unavailable error=%s hint=needs dtparam=spi=on and "
+                    "core_freq_min=500 in /boot/firmware/config.txt, then a reboot; "
+                    "running without ring feedback",
+                    exc,
+                )
+                return NullRing()
         case "terminal":
             return TerminalRing()
         case "null":
