@@ -47,7 +47,7 @@ Pi (not Docker — 512 MB RAM, and ALSA passthrough isn't worth the trouble).
   A dead server or dropped WiFi must never lose a joke.
 - **FR-7** Recordings from kidbox always carry `source=kid`, `origin=kidbox`.
 
-### 3.2 kidbox — play (BTN2, GPIO22)
+### 3.2 kidbox — play (BTN2; GPIO22, or GPIO27 on the Pi 4 build)
 - **FR-8** Tap requests one recording from the server and plays it through the
   Codec Zero speaker.
 - **FR-9** A tap while playing **stops** playback (does not queue another).

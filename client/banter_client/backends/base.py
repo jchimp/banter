@@ -7,7 +7,7 @@ implementation swaps, chosen by config:
             sounddevice-> PortAudio              (laptop mic/speakers, any OS)
             synthetic  -> generated tone, no I/O  (CI, headless tests)
 
-    buttons gpio       -> gpiozero on GPIO17/22  (Pi)
+    buttons gpio       -> gpiozero, pins from config (Pi)
             keyboard   -> stdin: r / p / q       (laptop)
 
     ring    neopixel   -> WS2812 over SPI        (Pi)

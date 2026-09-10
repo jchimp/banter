@@ -60,7 +60,7 @@ and ring wire straight to it.
 
 | ☐ | Item | Notes | ~$ |
 |---|------|-------|----|
-| ☐ | Raspberry Pi 4 (2 GB is plenty) | Same GPIO17/22/10 assignments as the Zero build. | 45 |
+| ☐ | Raspberry Pi 4 (2 GB is plenty) | Same GPIO17/10 assignments as the Zero build; BTN2 play is on GPIO27 here (GPIO22 is dead on this board). | 45 |
 | ☐ | USB-C **3 A** PSU | The Pi 4 wants more than the Zero's 2.5 A micro-USB supply. | 10 |
 | ☐ | USB webcam (used as the mic) | Any UVC webcam with a mic. `plughw:` converts its native 48 kHz stereo to 16 kHz mono. | 15–30 |
 | ☐ | Powered USB speaker | Self-powered — don't run a speaker off the Pi's 5V rail alongside the ring. | 15–25 |
