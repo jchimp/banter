@@ -24,6 +24,7 @@ class GpioButtons:
         from gpiozero import Button  # lazy: not installed off-hardware
 
         self.cb, self.mode = callbacks, mode
+        self._pin_record, self._pin_play = pin_record, pin_play
         self._rec_btn = Button(pin_record, pull_up=True, bounce_time=bounce_seconds)
         self._play_btn = Button(pin_play, pull_up=True, bounce_time=bounce_seconds)
         self._toggled = False
@@ -35,6 +36,21 @@ class GpioButtons:
         else:
             self._rec_btn.when_pressed = self._toggle
         self._play_btn.when_pressed = self.cb.on_play_press
+
+    def held_pins(self) -> list[tuple[str, int]]:
+        """Read the two lines directly. See `ButtonBackend.held_pins`.
+
+        Reads the existing Button objects rather than making new ones: a second
+        `Button` on a pin this process already holds raises GPIOPinInUse.
+        """
+        return [
+            (name, pin)
+            for name, btn, pin in (
+                ("record", self._rec_btn, self._pin_record),
+                ("play", self._play_btn, self._pin_play),
+            )
+            if btn.is_pressed
+        ]
 
     def _toggle(self) -> None:
         self._toggled = not self._toggled
@@ -65,6 +81,10 @@ class KeyboardButtons:
     def start(self) -> None:
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
+
+    def held_pins(self) -> list[tuple[str, int]]:
+        """No pins to be stuck on. See `ButtonBackend.held_pins`."""
+        return []
 
     def _loop(self) -> None:
         print("\n  [r] record toggle   [p] play   [q] quit\n", flush=True)

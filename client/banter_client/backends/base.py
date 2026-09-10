@@ -51,6 +51,16 @@ class ButtonBackend(Protocol):
     def start(self) -> None:
         """Begin delivering callbacks. Non-blocking."""
 
+    def held_pins(self) -> list[tuple[str, int]]:
+        """(name, BCM pin) for every input reading pressed right now.
+
+        Startup preflight only. gpiozero delivers callbacks on a high->low *edge*, so a
+        pin already low when the process starts produces silence forever — no callback,
+        no error, no log line. That is indistinguishable from a button nobody pressed,
+        and it is what a shorted line looks like from inside the app. Backends with no
+        real pins return an empty list.
+        """
+
     def close(self) -> None: ...
 
 

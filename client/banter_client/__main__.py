@@ -77,6 +77,7 @@ class App:
         )
 
         self._check_audio_devices()
+        self._check_buttons()
 
         self.uploader.start()
         self.heartbeat.start()
@@ -106,6 +107,26 @@ class App:
         for problem in check_alsa_devices(self.s.alsa_capture, self.s.alsa_playback):
             log.error("event=alsa_device_missing %s", problem)
 
+    def _check_buttons(self) -> None:
+        """Warn if a button is already reading pressed before we start listening.
+
+        Same contract as `_check_audio_devices`: say what's wrong and carry on. A
+        genuine finger on the button at boot is indistinguishable from a shorted line,
+        so this can't be fatal — but a stuck line is otherwise completely silent, which
+        is worse. Must run before `buttons.start()`, while the callbacks are still
+        unbound.
+        """
+        if self.s.button_backend != "gpio":
+            return
+        try:
+            held = self.buttons.held_pins()
+        except Exception:
+            # Reading the lines is diagnostics; never let it be why the box won't boot.
+            log.warning("event=button_check_failed")
+            return
+        for problem in stuck_button_problems(held):
+            log.error("event=button_stuck %s", problem)
+
     def _on_signal(self, signum: int, _frame: FrameType | None) -> None:
         log.info("event=signal signum=%s", signal.Signals(signum).name)
         self._done.set()
@@ -126,6 +147,20 @@ def dir_problem(path: Path) -> str | None:
     if not os.access(path, os.W_OK):
         return f"path={path} error=exists but is not writable by this user"
     return None
+
+
+def stuck_button_problems(held: list[tuple[str, int]]) -> list[str]:
+    """One message per button that reads pressed at startup.
+
+    Split from `_check_buttons` for the same reason `dir_problem` is split out: the
+    formatting is the part worth testing, and it tests without a GPIO.
+    """
+    return [
+        f"name={name} pin={pin} error=reads pressed at startup; gpiozero fires on a "
+        f"press EDGE, so this button will never trigger. Check the switch lugs "
+        f"(one to GPIO{pin}, one to GND) or a faulty pin — see the CLAUDE.md pin table"
+        for name, pin in held
+    ]
 
 
 def main() -> int:
