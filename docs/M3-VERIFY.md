@@ -63,6 +63,13 @@ instead of `event=started`: `TELEGRAM_BOT_TOKEN` is blank in the running contain
 
 ### 2a. Kid records → both parents get audio within ~10s
 
+**If the box is up, do this from the box instead** — hold BTN1, tell a joke, release.
+The curl seed below bypasses the mic, the on-disk queue, the uploader and the WAV
+duration probe, all of which are on the real path and none of which the seed exercises.
+One button press discharges this section, the M1 "Done when", and §3's timing at once.
+Keep the curl seed for a serverless dev box, or as the bisect when a real recording
+doesn't arrive and you need to know whether the box or the bot is at fault.
+
 Seed a kid recording via the upload API (no hardware/client needed). Make a short
 valid WAV first — `probe_wav` requires real WAV framing, so an empty/garbage file
 will 400:
@@ -153,6 +160,31 @@ Send `/stats` from a parent chat:
 
 - [ ] Reply lists one line per source (`kid: N (Mm SSs), last ...`, etc.) plus a
       `total: N (Mm SSs)` line, and the counts match what you seeded in 2a/2b
+
+### 2f. The whole loop, on the box
+
+Everything above drives at least one end with `curl`. This section is the product:
+nobody touches a keyboard between step 1 and step 4. Run it last, with the kid.
+
+- [ ] **1.** Kid holds BTN1, tells a joke, releases → `event=saved id=... duration=...`
+      in `journalctl -u banter-client -f`. Note the wall-clock time.
+- [ ] **2.** Both parent phones get the voice message. Subtract; budget is ~10s.
+- [ ] **3.** A parent replies with a voice note → `handle_voice | created | source=...`
+      on the server, `Got it! Thanks for the joke.` on the phone.
+- [ ] **4.** Kid presses BTN2 → the parent's joke plays. Client logs
+      `event=playing id=tg-... cached=False`. Time from press to first audio ≤1.5s
+      (the M2 "Done when").
+- [ ] **5.** Kid presses BTN2 again → a **different** recording plays, not a repeat.
+      Tier 1 is exhausted, so this should be a kid recording (tier 3). This is FR-13's
+      no-repeat rule on real hardware; nothing else in this checklist covers it.
+- [ ] **6.** Keep pressing until the pool is empty → the client logs the empty case and
+      returns to idle without wedging. **Note what the box does from the outside.**
+
+Step 6 is the honest one. With the ring not yet wired (`BANTER_RING_BACKEND=null`), an
+empty pool, a crashed fetch and an unreachable server are all *completely silent* — the
+kid gets no signal at all, and neither does anyone standing next to them. That is the
+concrete reason this box is still a supervised device. Record what you observe; it's
+the requirements input for M5.
 
 ---
 
