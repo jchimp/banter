@@ -7,8 +7,7 @@ still goes through `app.audio.resolve_playable_audio`, the single owner of the
 path-escape guard.
 
 Soft-delete/undo (FR-23) lives here too: `delete_recording`/`restore_recording`
-below. The read-only device panel (FR-24) is a later step; `index.html` leaves a
-marked placeholder for it.
+below, and the read-only device panel (FR-24) renders from `_devices_panel.html`.
 """
 
 import logging

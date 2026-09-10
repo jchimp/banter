@@ -7,7 +7,7 @@ implementation swaps, chosen by config:
             sounddevice-> PortAudio              (laptop mic/speakers, any OS)
             synthetic  -> generated tone, no I/O  (CI, headless tests)
 
-    buttons gpio       -> gpiozero on GPIO17/22  (Pi)
+    buttons gpio       -> gpiozero, pins from config (Pi)
             keyboard   -> stdin: r / p / q       (laptop)
 
     ring    neopixel   -> WS2812 over SPI        (Pi)
@@ -50,6 +50,16 @@ class AudioBackend(Protocol):
 class ButtonBackend(Protocol):
     def start(self) -> None:
         """Begin delivering callbacks. Non-blocking."""
+
+    def held_pins(self) -> list[tuple[str, int]]:
+        """(name, BCM pin) for every input reading pressed right now.
+
+        Startup preflight only. gpiozero delivers callbacks on a high->low *edge*, so a
+        pin already low when the process starts produces silence forever — no callback,
+        no error, no log line. That is indistinguishable from a button nobody pressed,
+        and it is what a shorted line looks like from inside the app. Backends with no
+        real pins return an empty list.
+        """
 
     def close(self) -> None: ...
 

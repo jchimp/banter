@@ -98,14 +98,22 @@ should not care.
 | Pin | Use | Notes |
 |---|---|---|
 | GPIO17 (pin 11) | BTN1 record | `Button(17)` — internal pull-up, switch to GND |
-| GPIO22 (pin 15) | BTN2 play | `Button(22)` |
+| GPIO22 (pin 15) | BTN2 play | `Button(22)` — **dead on the current Pi 4**, see below |
 | GPIO10 (pin 19) | NeoPixel data | SPI0 MOSI, `neopixel_spi` |
 | GPIO2/3 | **RESERVED** I2C (HAT) | do not touch |
 | GPIO18/19/20/21 | **RESERVED** I2S audio (HAT) | do not touch |
-| GPIO27 | HAT's own button | free for a future 3rd control |
+| GPIO27 | HAT's own button | free on the Pi 4 (no HAT) — **BTN2 play there**, see below |
 | GPIO23/24 | HAT status LEDs | usable for debug blinks |
 
 Free spares: GPIO5, 6, 12, 13, 16, 25.
+
+**Pi 4 variant — BTN2 is on GPIO27, not 22.** GPIO22 reads pressed at rest on that
+board and produces no edge in either direction; swapping the physical buttons kept the
+fault on the pin. Because gpiozero fires on a high->low edge, a line already low at boot
+means the button never triggers and logs nothing — `_check_buttons()` in the client's
+`__main__.py` exists to say so at startup. The override lives in `.env.pi4.example`
+only: `config.py`, `.env.example` and `wiring.svg` all still say 22, which is correct
+for the Codec Zero build, where GPIO27 is the HAT's own button and would collide.
 
 - Audio in/out is the **Codec Zero** HAT via ALSA. Record with `arecord -D <dev> -f S16_LE
   -r 16000 -c 1`; play with `aplay`. Device string comes from config, not hardcoded —

@@ -83,12 +83,13 @@
   <path class="w5" d="M606 307 H708"/><path class="wg" d="M630 323 H708"/>
 
   <!-- BTN2 -->
-  <rect class="panel" x="716" y="356" width="250" height="104" rx="10"/>
+  <rect class="panel" x="716" y="356" width="250" height="126" rx="10"/>
   <text class="lbls" x="731" y="378">BTN 2 · Play (blue)</text>
   <text class="tiny" x="731" y="395">switch lug → GPIO22</text>
   <text class="tiny" x="731" y="411">switch lug → GND</text>
   <text class="tiny" x="731" y="427">LED + → 5V</text>
   <text class="tiny" x="731" y="443">LED − → GND</text>
+  <text class="tiny" x="731" y="465">Pi 4 build: GPIO27, not 22</text>
   <circle class="dotb" cx="708" cy="391" r="5"/><circle class="dotg" cx="708" cy="407" r="5"/>
   <circle class="dot5" cx="708" cy="423" r="5"/><circle class="dotg" cx="708" cy="439" r="5"/>
   <path class="wb" d="M556 333 H688 V391 H708"/><path class="wg" d="M630 407 H708"/>
