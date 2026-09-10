@@ -138,10 +138,14 @@ From a **third** Telegram account (not mom's or dad's chat id), send the bot a
 voice note and `/stats`.
 
 - [ ] No reply arrives on that account
-- [ ] Logs show nothing for that chat at the default `LOG_LEVEL=INFO` — the allowlist
-      rejection is `log.debug("handle_update | ignored_unknown_chat")` in
-      `app/telegram/handlers.py`, invisible unless `LOG_LEVEL=DEBUG`
+- [ ] Logs show `handle_update | ignored_unknown_chat | chat_id=<the third account's id>`
+      at the default `LOG_LEVEL=INFO`, once per message you sent
 - [ ] DB row count unchanged (exact method: §4)
+
+This is a positive assertion on purpose. Until recently the rejection was `log.debug`
+and this check read "logs show nothing", which also passes when the bot is dead, the
+token is wrong, or `getUpdates` never ran — the three most likely reasons a stranger's
+message would produce no reply for the wrong reason.
 
 ### 2e. `/stats` sanity check
 
@@ -231,8 +235,8 @@ unless noted. Logger names shown as they appear after `configure_logging`'s
 - `bot | event=handler_failed | update_id=%s` — `log.exception` (ERROR)
 
 **`app/telegram/handlers.py`** (`logger=banter.telegram.handlers`)
-- `handle_update | ignored_unknown_chat` — **`log.debug`, invisible at
-  `LOG_LEVEL=INFO`** (this is the unknown-chat line for §2d)
+- `handle_update | ignored_unknown_chat | chat_id=%s` — the unknown-chat line for §2d;
+  visible at `LOG_LEVEL=INFO`
 - `handle_voice | duplicate_redelivery | source=%s id=%s`
 - `handle_voice | ingest_failed | source=%s id=%s` — `log.exception` (ERROR)
 - `handle_voice | probe_failed_fallback | source=%s id=%s` — `log.warning`

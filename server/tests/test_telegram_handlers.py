@@ -161,6 +161,20 @@ async def test_unknown_chat_stats_no_reply_no_row(settings, fake_client, ctx):
     assert fake_client.sent_messages == []
 
 
+async def test_unknown_chat_is_logged_at_info(settings, fake_client, ctx, caplog):
+    """The allowlist rejection must be visible without raising the log level.
+
+    It is the only barrier between a stranger's voice note and the kid's speaker, and
+    M3-VERIFY §2d proves it from the logs. At DEBUG that check degenerates into
+    "nothing was logged", which also holds when the bot never polled at all.
+    """
+    with caplog.at_level("INFO", logger="banter.telegram.handlers"):
+        await handlers.handle_update(_text_update(UNKNOWN_CHAT, "/stats"), ctx)
+
+    assert "ignored_unknown_chat" in caplog.text
+    assert UNKNOWN_CHAT in caplog.text
+
+
 # --- handle_voice (FR-16, FR-20) ------------------------------------------------
 
 

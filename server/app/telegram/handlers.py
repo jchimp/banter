@@ -77,7 +77,7 @@ async def handle_update(update: dict, ctx: BotContext) -> None:
     chat_id = str(message["chat"]["id"])
     source = ctx.settings.source_for_chat(chat_id)
     if source is None:
-        log.debug("handle_update | ignored_unknown_chat")
+        log.info("handle_update | ignored_unknown_chat | chat_id=%s", chat_id)
         return
 
     if "voice" in message:
