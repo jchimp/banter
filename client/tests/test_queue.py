@@ -10,7 +10,7 @@ import shutil
 import wave
 from pathlib import Path
 
-from banter_client.queue import RecordingMeta, RecordingQueue
+from banter_client.queue import RecordingMeta, RecordingQueue, probe_duration_ms
 
 
 def _write_wav(path: Path, seconds: float = 1.0, rate: int = 16000) -> None:
@@ -214,3 +214,24 @@ def test_pending_tolerates_sidecar_deleted_mid_flight(tmp_path):
     (queue.queue_dir / f"{meta.id}.json").unlink()
 
     assert queue.pending() == []  # no exception, just skipped
+
+
+# --------------------------------------------------------------------- duration probe
+def test_probe_ignores_header_claim_when_data_missing(tmp_path):
+    """A SIGKILLed arecord leaves a header claiming the full `-d` duration over an
+    empty data chunk (the Pi 4 stalled-capture failure: duration=60.00 bytes=44).
+    The probe must report what is on disk, not what the header promises."""
+    wav = tmp_path / "lying.wav"
+    _write_wav(wav, seconds=60.0)
+    wav.write_bytes(wav.read_bytes()[:44])  # canonical PCM header only, zero data
+
+    assert probe_duration_ms(wav) == 0
+
+
+def test_probe_reports_actual_data_for_truncated_wav(tmp_path):
+    rate = 16000
+    wav = tmp_path / "partial.wav"
+    _write_wav(wav, seconds=2.0, rate=rate)
+    wav.write_bytes(wav.read_bytes()[: 44 + rate * 2])  # header says 2s, data holds 1s
+
+    assert probe_duration_ms(wav) == 1000

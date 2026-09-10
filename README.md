@@ -225,7 +225,7 @@ cd ~/banter/client
 cp .env.example .env          # Pi 4 + USB audio? use .env.pi4.example instead
 arecord -l && aplay -l        # fill in BANTER_ALSA_CAPTURE / _PLAYBACK
 uv sync --extra hardware      # gpiozero + neopixel; omit --extra off-hardware
-uv run banter-client          # hold BTN1 to record; runs until SIGINT/SIGTERM
+uv run --no-sync banter-client   # hold BTN1 to record; runs until SIGINT/SIGTERM
 
 sudo cp banter-client.service /etc/systemd/system/
 sudo systemctl enable --now banter-client
@@ -257,6 +257,12 @@ the toolchain (`swig`, `python3-dev`, `build-essential`) and the library headers
 (`liblgpio-dev`). With all four installed the build takes about a minute, once per
 venv. Apt's `python3-lgpio` is not a shortcut: it lives outside uv's venv, and opening
 the venv up to system site-packages fights every later `uv sync`.
+
+A plain `uv run banter-client` on the Pi fails with `ModuleNotFoundError: No module
+named 'board'` even right after a successful `uv sync --extra hardware`: `uv run`
+re-syncs the venv to the base dependencies first, silently **uninstalling** the
+hardware extra. Always pass `--no-sync` on the Pi (the systemd unit does), or
+re-state the extra: `uv run --extra hardware banter-client`.
 
 The ring pulls in Adafruit Blinka, whose Pi 4 pin module imports `RPi.GPIO` — which is
 unmaintained, broken on Bookworm+ kernels and unbuildable on Python 3.13. The

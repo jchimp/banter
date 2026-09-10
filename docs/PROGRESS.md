@@ -1,9 +1,9 @@
 # Project Progress
 
 ## Current Focus
-M4 is merged to `main`. Bringing up the first real device — a Pi 4 with USB webcam mic +
-USB speaker (`pi4-usb-audio`, merged) — currently stuck at "client starts"; nothing of
-the record/play loop is exercised on hardware yet.
+Pi 4 bring-up. Client runs and playback works (Jieli UACDemoV10 dongle); recording is
+blocked on the C960 webcam's non-compliant mic — direct `hw:` capture I/O-errors.
+Working around or replacing that mic is the gate.
 
 ## Open Todos
 - [x] M0 — skeleton, config, migrations, healthz, test harness
@@ -31,8 +31,31 @@ the record/play loop is exercised on hardware yet.
 - [ ] Pi 4 bring-up: confirm the webcam/speaker device strings record and play a clip
 - [ ] Pi 4 bring-up: buttons on GPIO17/22, then the NeoPixel ring once SPI is enabled
 - [ ] Decide whether the Codec Zero build is still happening, or the Pi 4 is the box
+- [ ] Pi 4: get a working mic — try C960 at 48 kHz, check the UACDemoV10 dongle for a
+      capture side, try a USB 2.0 hub; else replace the webcam mic
+- [ ] Merge `fix/probe-truncated-wav` (probe trusts data not header, arecord stderr
+      logging, service `--no-sync`, wiring.svg LED lugs)
 
 ## Progress Log
+
+### 2026-09-07 (Pi 4 silent recordings)
+- Diagnosed the "60s silent voice notes": a stalled ALSA capture leaves arecord blocked,
+  the SIGKILL escalation kills it, and the WAV header still claims the full `-d 60` —
+  `probe_duration_ms()` trusted the header. Fixed: the probe now counts bytes actually
+  on disk, so header-only clips are discarded instead of uploaded. Two regression tests;
+  133 client tests pass, ruff clean (`fix/probe-truncated-wav`).
+- Hardened diagnostics: arecord runs `-q` with stderr piped to the log
+  (`event=arecord_stderr`), and the SIGKILL path logs `event=arecord_killed`.
+- Caught `uv run` without `--no-sync` re-syncing the venv and uninstalling the
+  `hardware` extra (the `import board` crash). Service unit and README now use/document
+  `--no-sync`; venv is managed explicitly with `uv sync --extra hardware`.
+- Hardware verdict: the C960 webcam mic is non-compliant USB audio (`cannot get freq at
+  ep 0x84`, xhci disabled-endpoint error) — direct `hw:` capture I/O-errors even after a
+  power supply swap. Playback through the UACDemoV10 dongle works.
+- Corrected `wiring.svg` for 4-lug arcade buttons: LED lugs to 5V/GND, switch lugs
+  unchanged (GPIO + GND, internal pull-up), explicit "5V never touches a switch lug".
+- Next: 48 kHz capture test / UACDemoV10 capture side / USB 2.0 hub, else replace the
+  mic; M3's real-token pass still outstanding.
 
 ### 2026-08-30 (Pi 4 bring-up)
 - Corrected the parts list: the Codec Zero's 2×20 socket is not pass-through, so a

@@ -11,7 +11,11 @@ Type=simple
 User=pi
 WorkingDirectory=/home/pi/banter/client
 EnvironmentFile=/home/pi/banter/client/.env
-ExecStart=/home/pi/.local/bin/uv run --no-dev banter-client
+# --no-sync: `uv run` otherwise re-syncs the venv to the base dependencies and
+# UNINSTALLS the `hardware` extra (board/gpiozero/neopixel) installed at setup.
+# It also keeps boot offline-safe — no network, no lgpio rebuild. The venv is
+# managed explicitly with `uv sync --extra hardware`; see README.
+ExecStart=/home/pi/.local/bin/uv run --no-sync banter-client
 Restart=on-failure
 RestartSec=3
 # __main__.py handles SIGTERM and shuts the uploader thread down within a few
