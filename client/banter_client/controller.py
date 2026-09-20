@@ -8,19 +8,32 @@ loop. No server or queue calls happen here directly — `on_recorded` is the sea
 
 import logging
 import threading
+import time
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
+from banter_client.analysis import ClipStats, analyze_wav, reject_reason
 from banter_client.backends.base import AudioBackend, RingBackend
 from banter_client.backends.factory import make_audio, make_ring
 from banter_client.config import ClientSettings
 from banter_client.player import Clip, Player
 from banter_client.queue import RecordingMeta, probe_duration_ms
 from banter_client.state import State, StateMachine
+from banter_client.tones import ensure_tones
 
 log = logging.getLogger("banter.controller")
+
+
+def _stats_kv(stats: ClipStats | None) -> str:
+    """The three tunable measurements as log fields; `na` when the file was unreadable."""
+    if stats is None:
+        return "peak_dbfs=na floor_dbfs=na voiced=na"
+    return (
+        f"peak_dbfs={stats.peak_dbfs:.1f} floor_dbfs={stats.noise_floor_dbfs:.1f} "
+        f"voiced={stats.voiced_seconds:.2f}"
+    )
 
 
 class RecordController:
@@ -43,6 +56,9 @@ class RecordController:
         self.player = player
         self.current: Path | None = None
         self._watchdog: threading.Timer | None = None
+        # Arm timer: BTN1 pressed but capture not yet started (record_arm_seconds).
+        self._arm: threading.Timer | None = None
+        self._pressed_at = 0.0
         # start/stop are reachable from a button callback AND the watchdog thread.
         # StateMachine is itself locked, but the check-then-act around self.current
         # is not, so guard the whole transition.
@@ -54,10 +70,24 @@ class RecordController:
         self._play_generation = 0
         self._play_worker: threading.Thread | None = None
         settings.queue_dir.mkdir(parents=True, exist_ok=True)
+        self._tones: dict[str, tuple[Path, float]] = {}
+        if settings.tones:
+            try:
+                self._tones = ensure_tones(
+                    settings.cache_dir / "tones",
+                    rate=settings.sample_rate,
+                    volume=settings.tone_volume,
+                )
+            except OSError as exc:
+                # Tones are feedback, not function: a read-only cache dir must not
+                # stop the box recording.
+                log.warning("event=tones_unavailable err=%s", exc)
 
     # -- record --------------------------------------------------------------
     def start_record(self) -> None:
-        """Begin capture. No-op while busy (FR-10: record/play are mutually exclusive)."""
+        """BTN1 pressed. Takes the RECORDING state at once (FR-10: record/play are
+        mutually exclusive) but capture itself waits `record_arm_seconds`, then a
+        beep, so a bump or a tap never spawns a capture at all."""
         with self._lock:
             self._start_record()
 
@@ -65,28 +95,76 @@ class RecordController:
         if self.machine.is_busy() or not self.machine.to(State.RECORDING):
             log.info("event=record_ignored state=%s", self.machine.state)
             return
+        self.ring.show("recording")
+        self._pressed_at = time.monotonic()
+        if self.s.record_arm_seconds > 0:
+            self._arm = threading.Timer(self.s.record_arm_seconds, self._armed)
+            self._arm.daemon = True
+            self._arm.start()
+        else:
+            self._begin_capture()
+
+    def _armed(self) -> None:
+        """Arm timer body. The release may have already been processed, so re-check."""
+        with self._lock:
+            self._arm = None
+            if self.machine.state is not State.RECORDING or self.current is not None:
+                return
+            self._begin_capture()
+
+    def _begin_capture(self) -> None:
+        # Beep first, capture second, on purpose: the beep never lands in the clip,
+        # and aplay + arecord never run at once on the Codec Zero's single device.
+        self._play_tone("record")
         # Client owns the id (PRD S4, CLAUDE.md "idempotent uploads": server upserts
         # on it), so it must exist before the file is even written.
         self.current = self.s.queue_dir / f"{uuid.uuid4().hex[:12]}.wav"
         self.audio.start_record(self.current)
-        self.ring.show("recording")
         # ALSA self-limits via `arecord -d`; sounddevice/synthetic don't, so arm a
         # watchdog here too. PRD FR-2: auto-stop and KEEP the clip at the cap.
         self._watchdog = threading.Timer(self.s.max_seconds, self._on_max_seconds)
         self._watchdog.daemon = True
         self._watchdog.start()
 
+    def _play_tone(self, name: str) -> None:
+        """Play a prompt tone and wait for it to finish. Never raises; never touches
+        the state machine — a tone is not a PLAYING state the buttons can interrupt."""
+        tone = self._tones.get(name)
+        if tone is None:
+            return
+        path, seconds = tone
+        done = threading.Event()
+        try:
+            self.audio.play(path, on_done=done.set)
+            if not done.wait(seconds + 0.5):
+                log.warning("event=tone_timeout name=%s", name)
+        except Exception as exc:  # noqa: BLE001 — feedback must never block capture
+            log.warning("event=tone_failed name=%s err=%s", name, exc)
+
     def _on_max_seconds(self) -> None:
         log.info("event=max_seconds_hit seconds=%s", self.s.max_seconds)
         self.stop_record()
 
     def stop_record(self) -> None:
-        """Stop capture. Discards clips under `min_seconds` (FR-3); else keeps + notifies."""
+        """BTN1 released. Discards clips that are too short (FR-3), silent, or have
+        too little content (analysis.py); else keeps + notifies."""
         with self._lock:
             self._stop_record()
 
     def _stop_record(self) -> None:
         if self.machine.state is not State.RECORDING:
+            return
+        if self.current is None:
+            # Released before the arm timer fired: nothing was captured, nothing to
+            # clean up, and no discard blip — a tap should feel like nothing happened.
+            self._cancel_arm()
+            log.info(
+                "event=record_ignored reason=tap held=%.2f arm=%.2f",
+                time.monotonic() - self._pressed_at,
+                self.s.record_arm_seconds,
+            )
+            self.machine.to(State.IDLE)
+            self.ring.show("idle")
             return
         self._cancel_watchdog()
         held = self.audio.stop_record()
@@ -98,28 +176,64 @@ class RecordController:
         # a parent's phone as an unplayable voice note. Every backend finishes
         # writing before stop_record() returns, so this probe sees the final file.
         captured = probe_duration_ms(path) / 1000 if path is not None and path.exists() else 0.0
+        stats: ClipStats | None = None
         if captured < self.s.min_seconds:
-            if path:
-                path.unlink(missing_ok=True)
-            self.ring.flash("discarded")
-            # Log both: captured well under held means the mic produced nothing, which
-            # is a different problem from the kid tapping instead of holding.
-            log.info(
-                "event=discarded captured=%.2f held=%.2f min=%.2f",
-                captured,
-                held,
-                self.s.min_seconds,
+            reason: str | None = "too_short"
+        else:
+            stats = analyze_wav(
+                path, silence_dbfs=self.s.silence_dbfs, voice_margin_db=self.s.voice_margin_db
             )
+            # An unreadable-but-probeable file is off-spec, not empty; let the server
+            # judge it rather than lose a joke to a format quirk.
+            reason = (
+                reject_reason(
+                    stats,
+                    silence_dbfs=self.s.silence_dbfs,
+                    min_voiced_seconds=self.s.min_voiced_seconds,
+                )
+                if stats is not None
+                else None
+            )
+        if reason is not None:
+            self._discard(path, reason, captured, held, stats)
         else:
             meta = self._build_meta(path, captured)
             self.ring.flash("success")
             log.info(
-                "event=saved id=%s duration=%.2f bytes=%d", meta.id, captured, path.stat().st_size
+                "event=saved id=%s duration=%.2f bytes=%d %s",
+                meta.id,
+                captured,
+                path.stat().st_size,
+                _stats_kv(stats),
             )
             if self.on_recorded:
                 self.on_recorded(meta)
         self.machine.to(State.IDLE)
         self.ring.show("idle")
+
+    def _discard(
+        self, path: Path | None, reason: str, captured: float, held: float, stats: ClipStats | None
+    ) -> None:
+        if path:
+            path.unlink(missing_ok=True)
+        self.ring.flash("discarded")
+        self._play_tone("discard")
+        # captured well under held means the mic produced nothing, which is a different
+        # problem from the kid tapping instead of holding; the stats say which gate hit.
+        log.info(
+            "event=discarded reason=%s captured=%.2f held=%.2f min=%.2f min_voiced=%.2f %s",
+            reason,
+            captured,
+            held,
+            self.s.min_seconds,
+            self.s.min_voiced_seconds,
+            _stats_kv(stats),
+        )
+
+    def _cancel_arm(self) -> None:
+        if self._arm:
+            self._arm.cancel()
+            self._arm = None
 
     def _build_meta(self, path: Path, duration: float) -> RecordingMeta:
         return RecordingMeta(
@@ -255,6 +369,7 @@ class RecordController:
 
     def close(self) -> None:
         """Release backends. Safe to call more than once."""
+        self._cancel_arm()
         self._cancel_watchdog()
         # Bump the generation first: a worker still blocked in fetch_next() past the
         # join below would otherwise wake up and call play() on an already-closed
