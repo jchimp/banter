@@ -39,6 +39,23 @@ Working around or replacing that mic is the gate.
 
 ## Progress Log
 
+### 2026-09-20 (silent clips, press guard, tones)
+- Closed the gap the 2026-09-07 fix left open: a full-length clip of a quiet room still
+  passed the duration check. New `client/banter_client/analysis.py` measures peak,
+  noise floor and voiced seconds; the controller discards `silent` and `low_content`
+  clips beside the existing `too_short` rule. Thresholds are `BANTER_SILENCE_DBFS`,
+  `BANTER_VOICE_MARGIN_DB`, `BANTER_MIN_VOICED_SECONDS`; every clip logs the three
+  measurements so they can be tuned from the journal. Client only — server untouched.
+- Press guard: BTN1 must be held `BANTER_RECORD_ARM_SECONDS` (0.25) before anything
+  happens. A tap is `event=record_ignored reason=tap`, no arecord spawn, no file.
+- Tones (`tones.py`): go-ahead beep before capture starts (beep, *then* arecord, so it
+  is never in the clip and aplay/arecord never overlap on one device), falling
+  double-blip on discard. `BANTER_TONES` / `BANTER_TONE_VOLUME`. Generated at startup
+  into `$BANTER_CACHE_DIR/tones`; played through the ordinary `AudioBackend.play()`.
+- `SyntheticAudio` now emits a pulsed tone so CI clips have the dynamics the gate wants.
+- 163 client tests, ruff clean. Not yet heard on hardware: beep audibility and the
+  `-45 dBFS` default against the real mic are the next Pi 4 checks.
+
 ### 2026-09-07 (Pi 4 silent recordings)
 - Diagnosed the "60s silent voice notes": a stalled ALSA capture leaves arecord blocked,
   the SIGKILL escalation kills it, and the WAV header still claims the full `-d 60` —
