@@ -4,6 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -49,6 +50,25 @@ class ClientSettings(BaseSettings):
     # --- recording limits --------------------------------------------------
     max_seconds: int = 60
     min_seconds: float = 0.8
+    # BTN1 must stay pressed this long before the beep and capture start; a shorter
+    # press (a bump, a curious tap) is ignored outright. 0 disables the guard.
+    record_arm_seconds: float = Field(0.25, ge=0.0)
+    # Silence / low-content gate (analysis.py). Every clip logs peak_dbfs, floor_dbfs
+    # and voiced so these can be tuned from journald rather than by guesswork.
+    #   silence_dbfs:       a clip whose loudest sample is under this is `silent`; a
+    #                       100 ms window under this is never counted as voiced.
+    #   voice_margin_db:    a voiced window must also sit this far above the clip's own
+    #                       noise floor — a constant fan hum has no such headroom.
+    #   min_voiced_seconds: fewer voiced seconds than this is `low_content`. 0 disables.
+    silence_dbfs: float = -45.0
+    voice_margin_db: float = Field(6.0, ge=0.0)
+    min_voiced_seconds: float = Field(0.5, ge=0.0)
+
+    # --- tones (tones.py) ----------------------------------------------------
+    # The "go ahead" beep right before capture starts and the falling double-blip on a
+    # discard. One switch for both; volume is linear amplitude, 0..1.
+    tones: bool = True
+    tone_volume: float = Field(0.5, ge=0.0, le=1.0)
 
     # --- ring --------------------------------------------------------------
     ring_pixels: int = 16
