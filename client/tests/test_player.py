@@ -9,7 +9,9 @@ race with a real backend.
 """
 
 import io
+import math
 import os
+import struct
 import threading
 import wave
 from collections.abc import Callable
@@ -26,15 +28,28 @@ from banter_client.state import State
 BASE_MTIME = 1_700_000_000
 
 
-def _wav_bytes(seconds: float = 0.05, rate: int = 16000) -> bytes:
+def _wav_bytes(seconds: float = 0.05, rate: int = 16000, tone_hz: float | None = None) -> bytes:
     """Real mono 16-bit WAV bytes. The cache rejects anything `wave` can't parse, so
-    fixtures have to be actual audio rather than a b"data" placeholder."""
+    fixtures have to be actual audio rather than a b"data" placeholder. Silence by
+    default; `tone_hz` gives a pulsed tone for anything the controller's content gate
+    will inspect."""
+    n = int(seconds * rate)
+    if tone_hz is None:
+        pcm = b"\x00\x00" * n
+    else:
+        pcm = b"".join(
+            struct.pack(
+                "<h",
+                int(12000 * math.sin(2 * math.pi * tone_hz * i / rate)) if i % 6400 < 4800 else 0,
+            )
+            for i in range(n)
+        )
     buf = io.BytesIO()
     with wave.open(buf, "wb") as wf:
         wf.setnchannels(1)
         wf.setsampwidth(2)
         wf.setframerate(rate)
-        wf.writeframes(b"\x00\x00" * int(seconds * rate))
+        wf.writeframes(pcm)
     return buf.getvalue()
 
 
@@ -109,8 +124,9 @@ class FakeAudio:
     def start_record(self, path: Path) -> None:
         # The controller probes the finished file for real audio, not just its
         # existence -- a header-only WAV is exactly the bug that guard exists for --
-        # so the fake has to leave a genuinely playable one, like a real backend does.
-        path.write_bytes(_wav_bytes(seconds=1.0))
+        # so the fake has to leave a genuinely playable one, like a real backend does,
+        # with actual sound in it now that silence is a reason to discard.
+        path.write_bytes(_wav_bytes(seconds=1.0, tone_hz=440.0))
         self.is_recording = True
 
     def stop_record(self) -> float:
@@ -177,6 +193,10 @@ def _settings(tmp_path: Path, **overrides) -> ClientSettings:
         play_cache_size=3,
         api_key="secret-key",
         device_id="kidbox-01",
+        # These tests press/release back to back and assert on `audio.played`; the arm
+        # guard and prompt tones are covered in test_backends.py.
+        record_arm_seconds=0.0,
+        tones=False,
         _env_file=None,
     )
     defaults.update(overrides)
