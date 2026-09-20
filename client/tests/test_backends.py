@@ -3,6 +3,9 @@
 If these pass on your laptop, the loop works; only the backend swaps on the Pi.
 """
 
+import math
+import struct
+import time
 import wave
 from pathlib import Path
 
@@ -35,7 +38,29 @@ def sim_settings(tmp_path) -> ClientSettings:
         queue_dir=tmp_path / "queue",
         cache_dir=tmp_path / "cache",
         min_seconds=0.0,
+        # Loop tests press and release back to back; the arm guard and tones have their
+        # own tests further down.
+        record_arm_seconds=0.0,
+        tones=False,
+        # ...and SyntheticAudio's back-to-back capture is ~50 ms of tone: too short
+        # to have the dynamics the content gate wants, so that gate is off here.
+        min_voiced_seconds=0.0,
         _env_file=None,
+    )
+
+
+def _pcm(seconds: float, *, tone_hz: float | None = 440.0, amplitude: int = 12000) -> bytes:
+    """16 kHz mono 16-bit frames: a pulsed tone (300 ms on / 100 ms off, like
+    SyntheticAudio) or, with `tone_hz=None`, digital silence."""
+    rate, n = 16000, int(16000 * seconds)
+    if tone_hz is None:
+        return b"\x00\x00" * n
+    return b"".join(
+        struct.pack(
+            "<h",
+            int(amplitude * math.sin(2 * math.pi * tone_hz * i / rate)) if i % 6400 < 4800 else 0,
+        )
+        for i in range(n)
     )
 
 
@@ -199,7 +224,10 @@ def test_too_short_recording_is_discarded(tmp_path):
         audio_backend="synthetic",
         ring_backend="null",
         queue_dir=tmp_path / "q",
+        cache_dir=tmp_path / "cache",
         min_seconds=99.0,  # nothing can clear this
+        record_arm_seconds=0.0,
+        tones=False,
         _env_file=None,
     )
     controller = RecordController(settings, ring=NullRing())
@@ -249,7 +277,10 @@ def test_recording_with_no_captured_audio_is_discarded(tmp_path):
         audio_backend="synthetic",
         ring_backend="null",
         queue_dir=tmp_path / "q",
+        cache_dir=tmp_path / "cache",
         min_seconds=0.8,
+        record_arm_seconds=0.0,
+        tones=False,
         _env_file=None,
     )
     saved: list[object] = []
@@ -263,6 +294,169 @@ def test_recording_with_no_captured_audio_is_discarded(tmp_path):
     assert list(settings.queue_dir.glob("*.wav")) == [], "empty capture must be deleted"
     assert saved == [], "empty capture must not be handed to the uploader"
     assert "discarded" in controller.ring.flashes
+
+
+class ScriptedAudio:
+    """Fake mic + speaker for the arm-guard / gate / tone tests.
+
+    `start_record` writes `pcm` as a real WAV; every `play()` is appended to `events`
+    (as `play:<stem>`) and completes immediately, so the order of beep vs capture is
+    observable and no test waits on a real backend.
+    """
+
+    def __init__(self, pcm: bytes, held: float = 3.0) -> None:
+        self.pcm, self.held = pcm, held
+        self.events: list[str] = []
+        self.is_recording = False
+        self.is_playing = False
+
+    def start_record(self, path: Path) -> None:
+        with wave.open(str(path), "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(16000)
+            wf.writeframes(self.pcm)
+        self.events.append("start")
+        self.is_recording = True
+
+    def stop_record(self) -> float:
+        self.is_recording = False
+        return self.held
+
+    def play(self, path: Path, on_done=None) -> None:
+        self.events.append(f"play:{path.stem}")
+        if on_done:
+            on_done()
+
+    def stop_play(self) -> None:
+        self.is_playing = False
+
+    def close(self) -> None: ...
+
+
+def _gate_settings(tmp_path, **overrides) -> ClientSettings:
+    defaults = dict(
+        audio_backend="synthetic",
+        ring_backend="null",
+        queue_dir=tmp_path / "q",
+        cache_dir=tmp_path / "cache",
+        record_arm_seconds=0.0,
+        tones=True,
+        _env_file=None,
+    )
+    defaults.update(overrides)
+    return ClientSettings(**defaults)
+
+
+# -------------------------------------------------------------- arm guard
+def test_tap_shorter_than_arm_is_ignored_entirely(tmp_path, caplog):
+    """A bump on BTN1 must not beep, must not spawn a capture, must not blip."""
+    audio = ScriptedAudio(_pcm(3.0))
+    settings = _gate_settings(tmp_path, record_arm_seconds=0.5)
+    saved: list[object] = []
+    controller = RecordController(settings, audio=audio, ring=NullRing(), on_recorded=saved.append)
+
+    with caplog.at_level("INFO"):
+        controller.start_record()
+        assert controller.machine.state is State.RECORDING  # BTN2 is locked out at once
+        controller.stop_record()
+
+    assert controller.machine.state is State.IDLE
+    assert audio.events == []
+    assert list(settings.queue_dir.glob("*.wav")) == []
+    assert saved == []
+    assert "discarded" not in controller.ring.flashes
+    assert "event=record_ignored reason=tap" in caplog.text
+
+
+def test_hold_past_arm_beeps_then_captures(tmp_path):
+    audio = ScriptedAudio(_pcm(3.0))
+    settings = _gate_settings(tmp_path, record_arm_seconds=0.05)
+    saved: list[object] = []
+    controller = RecordController(settings, audio=audio, ring=NullRing(), on_recorded=saved.append)
+
+    controller.start_record()
+    deadline = time.monotonic() + 2.0
+    while "start" not in audio.events and time.monotonic() < deadline:
+        time.sleep(0.01)
+    controller.stop_record()
+
+    assert audio.events[:2] == ["play:record", "start"], "beep must finish before capture"
+    assert len(saved) == 1
+    assert controller.machine.state is State.IDLE
+
+
+def test_arm_disabled_captures_synchronously(tmp_path):
+    audio = ScriptedAudio(_pcm(3.0))
+    controller = RecordController(_gate_settings(tmp_path), audio=audio, ring=NullRing())
+    controller.start_record()
+    assert audio.events == ["play:record", "start"]
+    controller.stop_record()
+    assert "success" in controller.ring.flashes
+
+
+# ---------------------------------------------------------- content gate
+def test_silent_capture_is_discarded_with_blip(tmp_path, caplog):
+    """Three seconds of digital silence: long enough for FR-3, still not a joke."""
+    audio = ScriptedAudio(_pcm(3.0, tone_hz=None))
+    settings = _gate_settings(tmp_path)
+    saved: list[object] = []
+    controller = RecordController(settings, audio=audio, ring=NullRing(), on_recorded=saved.append)
+
+    with caplog.at_level("INFO"):
+        controller.start_record()
+        controller.stop_record()
+
+    assert list(settings.queue_dir.glob("*.wav")) == []
+    assert saved == []
+    assert "discarded" in controller.ring.flashes
+    assert audio.events == ["play:record", "start", "play:discard"]
+    assert "event=discarded reason=silent" in caplog.text
+    assert "peak_dbfs=-100.0" in caplog.text
+
+
+def test_low_content_capture_is_discarded(tmp_path, caplog):
+    """One short noise in a long quiet hold is not worth a parent's phone buzzing."""
+    audio = ScriptedAudio(_pcm(0.2, tone_hz=440.0) + _pcm(4.0, tone_hz=None))
+    settings = _gate_settings(tmp_path, tones=False)
+    controller = RecordController(settings, audio=audio, ring=NullRing())
+
+    with caplog.at_level("INFO"):
+        controller.start_record()
+        controller.stop_record()
+
+    assert list(settings.queue_dir.glob("*.wav")) == []
+    assert "event=discarded reason=low_content" in caplog.text
+
+
+def test_content_gate_can_be_disabled(tmp_path):
+    audio = ScriptedAudio(_pcm(0.2, tone_hz=440.0) + _pcm(4.0, tone_hz=None))
+    settings = _gate_settings(tmp_path, tones=False, min_voiced_seconds=0.0)
+    controller = RecordController(settings, audio=audio, ring=NullRing())
+    controller.start_record()
+    controller.stop_record()
+    assert len(list(settings.queue_dir.glob("*.wav"))) == 1
+
+
+def test_saved_clip_logs_tuning_stats(tmp_path, caplog):
+    audio = ScriptedAudio(_pcm(2.0))
+    settings = _gate_settings(tmp_path, tones=False)
+    controller = RecordController(settings, audio=audio, ring=NullRing())
+    with caplog.at_level("INFO"):
+        controller.start_record()
+        controller.stop_record()
+    assert "event=saved" in caplog.text
+    assert "peak_dbfs=" in caplog.text and "voiced=" in caplog.text
+
+
+def test_tones_off_never_calls_play(tmp_path):
+    audio = ScriptedAudio(_pcm(3.0, tone_hz=None))
+    settings = _gate_settings(tmp_path, tones=False)
+    controller = RecordController(settings, audio=audio, ring=NullRing())
+    controller.start_record()
+    controller.stop_record()  # discarded as silent -> would blip if tones were on
+    assert audio.events == ["start"]
+    assert not (controller.s.cache_dir / "tones").exists()
 
 
 def test_play_ignored_while_recording(sim_settings):
