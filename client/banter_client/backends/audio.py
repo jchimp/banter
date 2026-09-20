@@ -274,8 +274,13 @@ class SyntheticAudio:
     """No audio device at all. Writes a real WAV (a tone) and fakes playback timing.
 
     This is what lets the whole record -> upload -> select -> play loop run in CI, or
-    on a headless box, and still produce genuine playable files.
+    on a headless box, and still produce genuine playable files. The tone is pulsed
+    (300 ms on, 100 ms off) rather than continuous so it has the dynamics the
+    controller's content gate (analysis.py) looks for, the way speech does.
     """
+
+    PULSE_ON_S = 0.3
+    PULSE_PERIOD_S = 0.4
 
     def __init__(self, rate: int = 16000, tone_hz: float = 440.0) -> None:
         self.rate, self.tone_hz = rate, tone_hz
@@ -292,6 +297,7 @@ class SyntheticAudio:
             return 0.0
         duration = max(time.monotonic() - self._started, 0.05)
         n = int(self.rate * duration)
+        on, period = int(self.rate * self.PULSE_ON_S), int(self.rate * self.PULSE_PERIOD_S)
         with wave.open(str(self._path), "wb") as wf:
             wf.setnchannels(1)
             wf.setsampwidth(2)
@@ -299,7 +305,10 @@ class SyntheticAudio:
             wf.writeframes(
                 b"".join(
                     struct.pack(
-                        "<h", int(12000 * math.sin(2 * math.pi * self.tone_hz * i / self.rate))
+                        "<h",
+                        int(12000 * math.sin(2 * math.pi * self.tone_hz * i / self.rate))
+                        if i % period < on
+                        else 0,
                     )
                     for i in range(n)
                 )
