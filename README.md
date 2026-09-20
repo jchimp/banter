@@ -316,6 +316,25 @@ It logs and keeps running rather than exiting — a restart loop over a typo wou
 worse. `plughw:` (not `hw:`) matters on both: it converts the webcam's native 48 kHz
 stereo to the 16 kHz mono the server expects.
 
+### Tuning silence detection
+A clip that is long enough but has nothing in it is discarded on the box (PRD FR-3):
+`reason=silent` when its loudest sample is under `BANTER_SILENCE_DBFS`, `reason=low_content`
+when less than `BANTER_MIN_VOICED_SECONDS` of it is audibly above the clip's own noise
+floor. Every capture logs the numbers the gate used, kept or not:
+
+```
+INFO | banter.controller | event=saved id=3f9c... duration=4.21 bytes=134764 peak_dbfs=-8.3 floor_dbfs=-58.1 voiced=2.70
+INFO | banter.controller | event=discarded reason=silent captured=6.00 held=6.02 min=0.80 min_voiced=0.50 peak_dbfs=-61.2 floor_dbfs=-72.0 voiced=0.00
+```
+
+Read a few real ones from `journalctl -u banter-client` before touching the defaults:
+if quiet-room clips get through, raise `BANTER_SILENCE_DBFS` toward the `peak_dbfs` they
+show; if real jokes log `reason=silent`, lower it. `BANTER_VOICE_MARGIN_DB=0` turns the
+noise-floor rule off, `BANTER_MIN_VOICED_SECONDS=0` turns the content gate off entirely.
+A press shorter than `BANTER_RECORD_ARM_SECONDS` never starts a capture at all
+(`event=record_ignored reason=tap`), and `BANTER_TONES=false` silences the go-ahead beep
+and the discard blip.
+
 The ring is unchanged — GPIO10/SPI0, so `dtparam=spi=on` and `core_freq_min=500` still
 apply. With no HAT covering the header the buttons and ring wire straight to it, so
 none of the splitter hardware in `PARTS.md` is needed. Watch the account name: a Pi 4
