@@ -37,9 +37,18 @@ Pi (not Docker — 512 MB RAM, and ALSA passthrough isn't worth the trouble).
 ### 3.1 kidbox — record (BTN1, GPIO17)
 - **FR-1** Hold-to-record: recording starts on press, stops on release. Config
   `BUTTON_MODE=hold|toggle` (toggle = tap to start, tap to stop). Default `hold`.
+  BTN1 must stay pressed `RECORD_ARM_SECONDS` (default 0.25) before anything happens;
+  a shorter press is ignored outright. Then a short "go ahead" beep plays, and capture
+  starts only after it ends, so the beep is never in the clip.
 - **FR-2** Hard cap `MAX_SECONDS` (default 60). Auto-stop and keep at the cap.
-- **FR-3** Clips shorter than `MIN_SECONDS` (default 0.8) are discarded silently —
-  ignores accidental taps. Ring flashes the discard color once.
+- **FR-3** A finished clip is discarded, never uploaded, when it is shorter than
+  `MIN_SECONDS` (default 0.8, reason `too_short`), when its loudest sample is under
+  `SILENCE_DBFS` (default -45, reason `silent`), or when fewer than
+  `MIN_VOICED_SECONDS` (default 0.5) of it are above both `SILENCE_DBFS` and the clip's
+  own noise floor by `VOICE_MARGIN_DB` (default 6, reason `low_content`). Ring flashes
+  the discard color once and a falling double-blip plays (`TONES`, default on). Every
+  clip, kept or not, logs `peak_dbfs` / `floor_dbfs` / `voiced` so the thresholds can
+  be tuned from the journal.
 - **FR-4** Audio captured 16 kHz mono 16-bit WAV from the Codec Zero mic.
 - **FR-5** On stop: write to local queue dir, then upload async. Queue survives
   reboot; on start, re-enqueue anything left over.
@@ -102,7 +111,7 @@ random uniform choice within it.
 |---|---|
 | Idle | Off, or a dim warm ember (`IDLE_GLOW`, default off) |
 | Recording | Red/amber breathing pulse |
-| Discarded (too short) | Two quick amber blinks |
+| Discarded (too short / silent / low content) | Two quick amber blinks + falling double-blip tone |
 | Uploading | Amber comet spin |
 | Queued (offline) | Slow amber double-blink, repeats until drained |
 | Playing | Green rotating chase |
