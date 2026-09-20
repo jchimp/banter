@@ -104,7 +104,8 @@ Everything that makes it feel like a real object.
 
 - `adafruit-circuitpython-neopixel-spi` on GPIO10, brightness cap
 - State machine → animations per the PRD table
-- Prompt sounds: a "go ahead" beep before recording, a confirmation chirp after
+- Prompt sounds: ~~a "go ahead" beep before recording~~ (done, with a discard blip;
+  `tones.py`), a confirmation chirp after
 - Idle indicator when unplayed parent jokes exist (open question 3)
 - Enclosure: cut 2× 30 mm button holes, 45 mm ring window + diffuser, speaker grille
 - `core_freq_min=500` + `dtparam=spi=on` documented in setup
