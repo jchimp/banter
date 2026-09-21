@@ -35,7 +35,14 @@ def make_audio(s: ClientSettings) -> AudioBackend:
 def make_buttons(s: ClientSettings, callbacks: ButtonCallbacks) -> ButtonBackend:
     match s.button_backend:
         case "gpio":
-            return GpioButtons(callbacks, s.pin_record, s.pin_play, s.bounce_seconds, s.button_mode)
+            return GpioButtons(
+                callbacks,
+                pin_record=s.pin_record,
+                pin_play=s.pin_play,
+                pin_replay=s.pin_replay,
+                bounce_seconds=s.bounce_seconds,
+                mode=s.button_mode,
+            )
         case "keyboard":
             return KeyboardButtons(callbacks)
         case other:
