@@ -1,7 +1,7 @@
 # Banter
 
 A joke exchange between a kid and their parents. The kid records jokes on a physical
-box (**kidbox** — Pi Zero 2 W, two arcade buttons, a glowing ring). Parents receive
+box (**kidbox** — Pi Zero 2 W, three arcade buttons, a glowing ring). Parents receive
 them on Telegram and send jokes back as voice notes. The box plays them.
 
 Docs: [`PRD.md`](PRD.md) (what) · [`ROADMAP.md`](ROADMAP.md) (order) ·
@@ -18,6 +18,7 @@ hardware pass on the Pi.
    │ banter-client.service (systemd)      │  HTTP  │ banter-server (FastAPI)    │
    │  BTN1 hold → record → POST           │───────▶│  SQLite + audio store      │
    │  BTN2 tap  → GET next → play         │◀───────│  HTMX UI · Telegram bot    │
+   │  BTN3 tap  → replay last local clip  │        │                            │
    └──────────────────────────────────────┘        └───────────┬───────────────┘
                                                         Mom / Dad on Telegram
 ```
@@ -49,11 +50,12 @@ cd client
 cp .env.dev.example .env
 uv sync --extra dev-audio        # PortAudio; Linux/macOS/Windows
 uv run banter-demo
-#   [r] record toggle   [p] play   [q] quit
+#   [r] record toggle   [p] play   [l] replay last   [q] quit
 ```
 
 `r` starts recording from your laptop mic, `r` again stops and writes a 16 kHz mono
-WAV to the queue dir, `p` plays the newest clip back. The terminal ring prints the
+WAV to the queue dir, `p` plays the newest clip back, `l` replays the last kept copy
+(what BTN3 does on the box: the copy outlives the upload). The terminal ring prints the
 state the NeoPixel would be showing. Hold-to-record is GPIO-only — line-based stdin
 can't express a hold, so the sim is always toggle mode.
 
@@ -81,7 +83,7 @@ cd client
 cp .env.dev.example .env      # set BANTER_API_KEY to match the server's
 uv sync --extra dev-audio
 uv run banter-client
-#   [r]+Enter to start recording, [r]+Enter again to stop and enqueue; ctrl-c to quit
+#   [r]+Enter to start recording, [r]+Enter again to stop and enqueue; [l]+Enter replay it; ctrl-c to quit
 ```
 
 Speak a joke, then press `r` again. The client writes a WAV to `BANTER_QUEUE_DIR`
@@ -110,7 +112,7 @@ couple with the record loop, or send a parent voice note to the bot), tap `p`:
 ```bash
 # terminal 2: client, dev profile (as above)
 uv run banter-client
-#   [r]+Enter record, [p]+Enter play/stop, ctrl-c to quit
+#   [r]+Enter record, [p]+Enter play/stop, [l]+Enter replay last, ctrl-c to quit
 ```
 
 `p` does two round trips, not one: `GET /api/recordings/next?device_id=...` picks a
