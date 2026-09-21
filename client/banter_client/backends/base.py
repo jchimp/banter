@@ -8,7 +8,7 @@ implementation swaps, chosen by config:
             synthetic  -> generated tone, no I/O  (CI, headless tests)
 
     buttons gpio       -> gpiozero, pins from config (Pi)
-            keyboard   -> stdin: r / p / q       (laptop)
+            keyboard   -> stdin: r / p / l / q   (laptop)
 
     ring    neopixel   -> WS2812 over SPI        (Pi)
             terminal   -> ANSI colour blocks     (laptop)
@@ -82,9 +82,12 @@ class ButtonCallbacks:
         on_record_press: Callable[[], None],
         on_record_release: Callable[[], None] | None = None,
         on_play_press: Callable[[], None] | None = None,
+        on_replay_press: Callable[[], None] | None = None,
         on_quit: Callable[[], None] | None = None,
     ) -> None:
         self.on_record_press = on_record_press
         self.on_record_release = on_record_release or (lambda: None)
         self.on_play_press = on_play_press or (lambda: None)
+        # BTN3: replay the last clip this box kept (PRD FR-26). Local only.
+        self.on_replay_press = on_replay_press or (lambda: None)
         self.on_quit = on_quit or (lambda: None)
