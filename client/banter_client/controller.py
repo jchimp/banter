@@ -7,6 +7,8 @@ loop. No server or queue calls happen here directly — `on_recorded` is the sea
 """
 
 import logging
+import os
+import shutil
 import threading
 import time
 import uuid
@@ -206,6 +208,7 @@ class RecordController:
                 path.stat().st_size,
                 _stats_kv(stats),
             )
+            self._keep_replay_copy(path)
             if self.on_recorded:
                 self.on_recorded(meta)
         self.machine.to(State.IDLE)
@@ -230,6 +233,24 @@ class RecordController:
             _stats_kv(stats),
         )
 
+    def _keep_replay_copy(self, path: Path) -> None:
+        """Copy the kept clip to `replay_path` for BTN3 (PRD FR-26).
+
+        A copy, not a move: the queue still owns the original and deletes it after the
+        server's 2xx, which is exactly why BTN3 cannot just play the newest queued
+        file. Overwriting the previous copy is derived data -- the clip it held was
+        already queued or uploaded -- so this is not the never-hard-delete-audio rule.
+        Best-effort: a failure here must never cost the upload.
+        """
+        dest = self.s.replay_path
+        tmp = dest.with_name(dest.name + ".tmp")
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(path, tmp)
+            os.replace(tmp, dest)
+        except OSError as exc:
+            log.warning("event=replay_copy_failed err=%s", exc)
+
     def _cancel_arm(self) -> None:
         if self._arm:
             self._arm.cancel()
@@ -250,29 +271,53 @@ class RecordController:
             self._watchdog.cancel()
             self._watchdog = None
 
-    # -- play ------------------------------------------------------------------
+    # -- play (local files: demo 'p', BTN3) ---------------------------------------
     def play_latest(self) -> None:
-        """Play the newest queued clip; a tap while playing stops it (FR-9)."""
+        """Play the newest queued clip (demo 'p'); a tap while playing stops it (FR-9)."""
         with self._lock:
-            self._play_latest()
+            clips = sorted(self.s.queue_dir.glob("*.wav"), key=lambda p: p.stat().st_mtime)
+            self._play_local(clips[-1] if clips else None, "playing", "play_empty_queue")
 
-    def _play_latest(self) -> None:
+    def replay_last(self) -> None:
+        """BTN3: play the last clip this box kept (PRD FR-26). A local file only --
+        never touches the server and posts no receipt. Tap while playing stops (FR-9);
+        ignored while recording (FR-10)."""
+        with self._lock:
+            dest = self.s.replay_path
+            self._play_local(dest if dest.exists() else None, "replaying", "replay_empty")
+
+    def _play_local(self, clip: Path | None, event: str, empty_event: str) -> None:
         if self.machine.state is State.PLAYING:
-            self.audio.stop_play()
+            self._interrupt_playing()
             return
         if self.machine.is_busy() or not self.machine.to(State.PLAYING):
             log.info("event=play_ignored state=%s", self.machine.state)
             return
-        clips = sorted(self.s.queue_dir.glob("*.wav"), key=lambda p: p.stat().st_mtime)
-        if not clips:
-            log.info("event=play_empty_queue")
+        if clip is None:
+            log.info("event=%s", empty_event)
             self.machine.to(State.IDLE)
             self.ring.flash("error")
             return
-        clip = clips[-1]
-        log.info("event=playing file=%s", clip.name)
+        log.info("event=%s file=%s", event, clip.name)
         self.ring.show("playing")
         self.audio.play(clip, on_done=self._played)
+
+    def _interrupt_playing(self) -> None:
+        """Any play button tapped while PLAYING. Stop the audio if it has started;
+        otherwise a BTN2 fetch is still in flight, so cancel that instead. Caller
+        holds the lock."""
+        if self.audio.is_playing:
+            self.audio.stop_play()
+            return
+        # Audio hasn't started yet -- we're still waiting on Player.fetch_next() on
+        # the worker thread. There is nothing for the audio backend to stop, so
+        # cancel the fetch by bumping the generation and settle the box back to
+        # IDLE ourselves; a slow/offline fetch must not keep BTN1 locked out for up
+        # to `http_timeout` seconds after the kid cancels.
+        self._play_generation += 1
+        self.machine.to(State.IDLE)
+        self.ring.show("idle")
+        log.info("event=play_cancelled")
 
     def _played(self) -> None:
         self.machine.to(State.IDLE)
@@ -285,19 +330,7 @@ class RecordController:
         fetch instead (see the generation comment in `_fetch_and_play`)."""
         with self._lock:
             if self.machine.state is State.PLAYING:
-                if self.audio.is_playing:
-                    self.audio.stop_play()
-                else:
-                    # Audio hasn't started yet -- we're still waiting on
-                    # Player.fetch_next() on the worker thread. There is nothing
-                    # for the audio backend to stop, so cancel the fetch by
-                    # bumping the generation and settle the box back to IDLE
-                    # ourselves; a slow/offline fetch must not keep BTN1 locked
-                    # out for up to `http_timeout` seconds after the kid cancels.
-                    self._play_generation += 1
-                    self.machine.to(State.IDLE)
-                    self.ring.show("idle")
-                    log.info("event=play_cancelled")
+                self._interrupt_playing()
                 return
             if self.player is None:
                 # No server-backed player wired (demo.py, or a misconfigured build).
