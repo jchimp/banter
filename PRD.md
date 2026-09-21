@@ -1,7 +1,7 @@
 # Banter — PRD
 
 **A joke exchange between a kid and their parents.** The kid records jokes on a
-physical box (two arcade buttons, a glowing ring). Parents get them on Telegram and
+physical box (three arcade buttons, a glowing ring). Parents get them on Telegram and
 send jokes back as voice notes. The box plays them.
 
 Status: spec. Version 0.1.0.
@@ -12,7 +12,7 @@ Status: spec. Version 0.1.0.
 
 | Actor | Interface | Can do |
 |---|---|---|
-| Kid | **kidbox** (Pi Zero 2 W in a box) | Record a joke; play a random joke |
+| Kid | **kidbox** (Pi Zero 2 W in a box) | Record a joke; play a random joke; replay their own last joke |
 | Parent (mom, dad) | Telegram bot | Get notified of new kid jokes; send voice notes; `/joke` to hear kid jokes |
 | Either | HTMX web UI (LAN) | Browse, play, see source, soft-delete |
 
@@ -23,7 +23,8 @@ Status: spec. Version 0.1.0.
    │ banter-client.service (systemd)      │  HTTP  │ banter-server (FastAPI)    │
    │  BTN1 hold → record → POST           │───────▶│  SQLite + audio store      │
    │  BTN2 tap  → GET next → play         │◀───────│  HTMX UI  ·  REST API      │
-   │  NeoPixel ring = state               │        │  Telegram bot (polling)    │
+   │  BTN3 tap  → replay last local clip  │        │  Telegram bot (polling)    │
+   │  NeoPixel ring = state               │        │                            │
    └──────────────────────────────────────┘        └───────────┬───────────────┘
                                                                │ Bot API
                                                         Mom / Dad on Telegram
@@ -67,6 +68,13 @@ Pi (not Docker — 512 MB RAM, and ALSA passthrough isn't worth the trouble).
 - **FR-12** Server unreachable → play a locally cached fallback clip if present,
   otherwise the error tone. Cache the last N (`PLAY_CACHE_SIZE`, default 10) played
   clips on disk.
+
+### 3.2b kidbox — replay (BTN3, GPIO5 on both builds)
+- **FR-26** Tap plays the last clip this device kept (passed FR-3), from a local copy
+  at `QUEUE_DIR/replay/last.wav`. The copy is written on save and survives the
+  upload deleting the queued original; a discarded clip never replaces it. No server
+  call, no play receipt. FR-9 (tap while playing stops) and FR-10 (ignored while
+  recording) apply. Nothing kept yet → the error flash.
 
 ### 3.3 Selection algorithm (server-side, the interesting bit)
 `GET /api/recordings/next` picks in strict tier order. First non-empty tier wins;
