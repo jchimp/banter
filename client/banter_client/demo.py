@@ -5,7 +5,8 @@
 Proves the audio path and the state machine on whatever machine you're sitting at. A
 thin wiring shell over `RecordController`: no queue, no uploader, no `on_recorded`
 hook — the demo is deliberately server-less. Recordings go to the queue dir; 'p' plays
-the most recent one. Same StateMachine and backend protocols M1/M2 use, so when the
+the newest queued one and 'l' replays the last kept copy, exactly as BTN3 does on the
+box. Same StateMachine and backend protocols M1/M2 use, so when the
 hardware lands you change three env vars and nothing else.
 """
 
@@ -59,6 +60,9 @@ class Demo:
     def play_latest(self) -> None:
         self.controller.play_latest()
 
+    def replay_last(self) -> None:
+        self.controller.replay_last()
+
     def quit(self) -> None:
         self.done.set()
 
@@ -67,6 +71,7 @@ class Demo:
             on_record_press=self.start_record,
             on_record_release=self.stop_record,
             on_play_press=self.play_latest,
+            on_replay_press=self.replay_last,
             on_quit=self.quit,
         )
         buttons = make_buttons(self.s, callbacks)
