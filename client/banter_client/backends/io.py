@@ -18,15 +18,17 @@ class GpioButtons:
         callbacks: ButtonCallbacks,
         pin_record: int,
         pin_play: int,
+        pin_replay: int,
         bounce_seconds: float = 0.05,
         mode: str = "hold",
     ) -> None:
         from gpiozero import Button  # lazy: not installed off-hardware
 
         self.cb, self.mode = callbacks, mode
-        self._pin_record, self._pin_play = pin_record, pin_play
+        self._pin_record, self._pin_play, self._pin_replay = pin_record, pin_play, pin_replay
         self._rec_btn = Button(pin_record, pull_up=True, bounce_time=bounce_seconds)
         self._play_btn = Button(pin_play, pull_up=True, bounce_time=bounce_seconds)
+        self._replay_btn = Button(pin_replay, pull_up=True, bounce_time=bounce_seconds)
         self._toggled = False
 
     def start(self) -> None:
@@ -36,9 +38,10 @@ class GpioButtons:
         else:
             self._rec_btn.when_pressed = self._toggle
         self._play_btn.when_pressed = self.cb.on_play_press
+        self._replay_btn.when_pressed = self.cb.on_replay_press
 
     def held_pins(self) -> list[tuple[str, int]]:
-        """Read the two lines directly. See `ButtonBackend.held_pins`.
+        """Read the three lines directly. See `ButtonBackend.held_pins`.
 
         Reads the existing Button objects rather than making new ones: a second
         `Button` on a pin this process already holds raises GPIOPinInUse.
@@ -48,6 +51,7 @@ class GpioButtons:
             for name, btn, pin in (
                 ("record", self._rec_btn, self._pin_record),
                 ("play", self._play_btn, self._pin_play),
+                ("replay", self._replay_btn, self._pin_replay),
             )
             if btn.is_pressed
         ]
@@ -59,13 +63,15 @@ class GpioButtons:
     def close(self) -> None:
         self._rec_btn.close()
         self._play_btn.close()
+        self._replay_btn.close()
 
 
 class KeyboardButtons:
     """Dev box. Line-based stdin so it works in any terminal on any OS.
 
       r + Enter   toggle recording (start, then stop)
-      p + Enter   play
+      p + Enter   play (server pick)
+      l + Enter   replay the last clip this box kept
       q + Enter   quit
 
     Hold-to-record can't be simulated over line input, so the sim is always toggle
@@ -87,7 +93,7 @@ class KeyboardButtons:
         return []
 
     def _loop(self) -> None:
-        print("\n  [r] record toggle   [p] play   [q] quit\n", flush=True)
+        print("\n  [r] record toggle   [p] play   [l] replay last   [q] quit\n", flush=True)
         while not self._stop.is_set():
             try:
                 key = sys.stdin.readline().strip().lower()
@@ -100,6 +106,8 @@ class KeyboardButtons:
                 (self.cb.on_record_press if self._recording else self.cb.on_record_release)()
             elif key == "p":
                 self.cb.on_play_press()
+            elif key == "l":
+                self.cb.on_replay_press()
             elif key == "q":
                 self.cb.on_quit()
                 break
