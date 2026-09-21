@@ -41,7 +41,6 @@ banter/
         │   ├── audio.py     # alsa | sounddevice | synthetic
         │   ├── io.py        # gpio|keyboard buttons, neopixel|terminal|null ring
         │   └── factory.py   # the only place that picks real vs simulated
-        ├── buttons.py       # gpiozero, mode hold|toggle
         ├── recorder.py      # arecord subprocess
         ├── player.py        # aplay subprocess + local cache
         ├── queue.py         # on-disk queue + retry uploader
@@ -99,13 +98,14 @@ should not care.
 |---|---|---|
 | GPIO17 (pin 11) | BTN1 record | `Button(17)` — internal pull-up, switch to GND |
 | GPIO22 (pin 15) | BTN2 play | `Button(22)` — **dead on the current Pi 4**, see below |
+| GPIO5 (pin 29) | BTN3 replay | `Button(5)` — same on both builds; plays the last clip this box kept |
 | GPIO10 (pin 19) | NeoPixel data | SPI0 MOSI, `neopixel_spi` |
 | GPIO2/3 | **RESERVED** I2C (HAT) | do not touch |
 | GPIO18/19/20/21 | **RESERVED** I2S audio (HAT) | do not touch |
 | GPIO27 | HAT's own button | free on the Pi 4 (no HAT) — **BTN2 play there**, see below |
 | GPIO23/24 | HAT status LEDs | usable for debug blinks |
 
-Free spares: GPIO5, 6, 12, 13, 16, 25.
+Free spares: GPIO6, 12, 13, 16, 25.
 
 **Pi 4 variant — BTN2 is on GPIO27, not 22.** GPIO22 reads pressed at rest on that
 board and produces no edge in either direction; swapping the physical buttons kept the
