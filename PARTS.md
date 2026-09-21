@@ -16,13 +16,13 @@ Prices are ballpark USD. `☐` = buy / check inventory.
 | ☐ | 40-pin GPIO splitter / expansion board (2 × 2×20 sockets) | The HAT goes in one socket, your buttons + ring wire into the other. Pimoroni Mini Black HAT Hack3r, or any generic 1→2 GPIO expansion board. | https://shop.pimoroni.com/products/mini-black-hat-hack3r | 10–15 |
 | ☐ | 40-pin female–female ribbon, **≤10 cm** | Pi header → splitter. Keep it short: I²S bit clock runs ~3 MHz and the HAT now hangs off a cable. | https://www.adafruit.com/product/1988 | 4 |
 
-**Why a splitter and not a stacking header:** the Codec Zero's 2×20 socket is *not* pass-through — it is closed on top and covers the whole header, so pins 11 (GPIO17), 15 (GPIO22), 19 (GPIO10) and every spare 5V/GND are buried once the HAT is seated. A tall header on the Pi doesn't help; the pass-through would have to be on the HAT. The splitter is the solderless way out — it also means the HAT is no longer stacked on the Pi, which is why the enclosure section below wants a second board position.
+**Why a splitter and not a stacking header:** the Codec Zero's 2×20 socket is *not* pass-through — it is closed on top and covers the whole header, so pins 11 (GPIO17), 15 (GPIO22), 29 (GPIO5), 19 (GPIO10) and every spare 5V/GND are buried once the HAT is seated. A tall header on the Pi doesn't help; the pass-through would have to be on the HAT. The splitter is the solderless way out — it also means the HAT is no longer stacked on the Pi, which is why the enclosure section below wants a second board position.
 
-## Buttons (2)
+## Buttons (3)
 
 | ☐ | Item | Notes | Link | ~$ |
 |---|------|-------|------|----|
-| ☐ | 2 × Arcade Button with LED, 30mm | **5V** LEDs (not 12V — that's the 60/100mm ones). Gold-contact microswitch, smooth press. Suggest Green = Record, Blue = Play. | Green https://www.adafruit.com/product/3487 · Blue https://www.adafruit.com/product/3490 | 6 ea |
+| ☐ | 3 × Arcade Button with LED, 30mm | **5V** LEDs (not 12V — that's the 60/100mm ones). Gold-contact microswitch, smooth press. Suggest Green = Record, Blue = Play, Yellow = Replay (BTN3, GPIO5). | Green https://www.adafruit.com/product/3487 · Blue https://www.adafruit.com/product/3490 · Yellow: same 30 mm LED arcade family (confirm SKU) | 6 ea |
 | ☐ | 0.110" quick-connect wire pairs | Arcade spade lugs — makes the whole build solderless. | https://www.adafruit.com/product/1152 | 3 |
 
 > Colors: clear/green/blue LEDs can run dim at 3.3V; **red and yellow are wired in series and need 5V+**. Plan on 5V either way.
@@ -38,7 +38,7 @@ Prices are ballpark USD. `☐` = buy / check inventory.
 
 **Why one ring, not two halos:** a 16-ring's inner hole is ~31.7 mm but a 30mm button's bezel is ~34 mm — the button covers the ring. Default = one ring behind a 45 mm diffused window as the status glow.
 
-*Upgrade variant (per-button halos):* swap to 2 × **24mm** Mini LED Arcade Buttons (https://www.adafruit.com/product/3429) + 2 × Ring 16. The 24mm bezel (~28 mm) fits inside the ring's 31.7 mm hole. Chain ring B's DIN off ring A's DOUT — same single data pin, indices 0–15 = record, 16–31 = play.
+*Upgrade variant (per-button halos):* swap to 3 × **24mm** Mini LED Arcade Buttons (https://www.adafruit.com/product/3429) + 3 × Ring 16. The 24mm bezel (~28 mm) fits inside the ring's 31.7 mm hole. Chain each ring's DIN off the previous DOUT — same single data pin, indices 0–15 = record, 16–31 = play, 32–47 = replay.
 
 ## Enclosure & small parts
 
@@ -49,7 +49,7 @@ Prices are ballpark USD. `☐` = buy / check inventory.
 | ☐ | Jumper wires F-F / F-M | Ring + button wiring. | any | 3 |
 | ☐ | Speaker grille cloth + M2.5 standoffs/screws | Mounting — **two** board positions now (Pi and Codec Zero sit side by side, not stacked), plus the splitter. | any | 4 |
 
-**Panel cutouts:** 2 × 30.0 mm button holes (≥40 mm apart, center to center), 1 × 45 mm ring window, speaker hole pattern, a small (~3 mm) mic port, micro-USB power slot on the side.
+**Panel cutouts:** 3 × 30.0 mm button holes (≥40 mm apart, center to center), 1 × 45 mm ring window, speaker hole pattern, a small (~3 mm) mic port, micro-USB power slot on the side.
 
 **Layout note:** the ribbon needs ~10 cm of slack routed between the Pi and the splitter, so plan for both boards lying flat rather than one on top of the other. The upside: the Codec Zero's on-board MEMS mic is no longer trapped under the Pi — mount that board mic-up against the panel mic port.
 
@@ -60,7 +60,7 @@ and ring wire straight to it.
 
 | ☐ | Item | Notes | ~$ |
 |---|------|-------|----|
-| ☐ | Raspberry Pi 4 (2 GB is plenty) | Same GPIO17/10 assignments as the Zero build; BTN2 play is on GPIO27 here (GPIO22 is dead on this board). | 45 |
+| ☐ | Raspberry Pi 4 (2 GB is plenty) | Same GPIO17/10 assignments as the Zero build; BTN2 play is on GPIO27 here (GPIO22 is dead on this board). BTN3 replay is GPIO5 on both builds. | 45 |
 | ☐ | USB-C **3 A** PSU | The Pi 4 wants more than the Zero's 2.5 A micro-USB supply. | 10 |
 | ☐ | USB webcam (used as the mic) | Any UVC webcam with a mic. `plughw:` converts its native 48 kHz stereo to 16 kHz mono. | 15–30 |
 | ☐ | Powered USB speaker | Self-powered — don't run a speaker off the Pi's 5V rail alongside the ring. | 15–25 |
@@ -79,7 +79,7 @@ Zero profile is `BANTER_ALSA_CAPTURE` / `BANTER_ALSA_PLAYBACK`; use the stable
 gadgets renumber across reboots.
 
 ## Total
-~$105–115 new. Less whatever's already in your kit bins (SD, PSU, resistors, jumpers, box).
+~$110–120 new. Less whatever's already in your kit bins (SD, PSU, resistors, jumpers, box).
 
 ## Explicitly NOT needed
 - No USB mic — the Codec Zero has one on board.
