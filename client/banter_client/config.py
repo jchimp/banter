@@ -44,6 +44,8 @@ class ClientSettings(BaseSettings):
     # --- buttons -----------------------------------------------------------
     pin_record: int = 17
     pin_play: int = 22
+    # BTN3 replay: same pin on both builds (the Codec Zero HAT does not use GPIO5).
+    pin_replay: int = 5
     button_mode: Literal["hold", "toggle"] = "hold"
     bounce_seconds: float = 0.05
 
@@ -96,6 +98,12 @@ class ClientSettings(BaseSettings):
     @property
     def next_url(self) -> str:
         return f"{self.recordings_url}/next"
+
+    @property
+    def replay_path(self) -> Path:
+        """BTN3's copy of the last kept clip. A sibling of the queue's `rejected/`, so
+        the queue scan and `play_latest` (both non-recursive) never see it."""
+        return self.queue_dir / "replay" / "last.wav"
 
     def heartbeat_url(self) -> str:
         return f"{self.api_url.rstrip('/')}/api/devices/{self.device_id}/heartbeat"
