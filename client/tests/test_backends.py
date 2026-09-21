@@ -3,8 +3,10 @@
 If these pass on your laptop, the loop works; only the backend swaps on the Pi.
 """
 
+import io
 import math
 import struct
+import sys
 import time
 import wave
 from pathlib import Path
@@ -21,7 +23,7 @@ from banter_client.backends.audio import (
 )
 from banter_client.backends.base import AudioBackend, ButtonBackend, ButtonCallbacks, RingBackend
 from banter_client.backends.factory import make_audio, make_buttons, make_ring
-from banter_client.backends.io import NullRing
+from banter_client.backends.io import KeyboardButtons, NullRing
 from banter_client.config import ClientSettings
 from banter_client.controller import RecordController
 from banter_client.demo import Demo
@@ -140,6 +142,29 @@ def test_factory_selects_simulated_backends(sim_settings):
     assert isinstance(audio, AudioBackend)
     assert isinstance(ring, RingBackend)
     assert isinstance(buttons, ButtonBackend)
+
+
+def test_keyboard_buttons_dispatch_replay_key(monkeypatch):
+    """`l` is BTN3 on the laptop. First direct coverage of the stdin key map."""
+    fired: list[str] = []
+    cb = ButtonCallbacks(
+        on_record_press=lambda: fired.append("record"),
+        on_play_press=lambda: fired.append("play"),
+        on_replay_press=lambda: fired.append("replay"),
+        on_quit=lambda: fired.append("quit"),
+    )
+    monkeypatch.setattr(sys, "stdin", io.StringIO("l\np\nl\nq\n"))
+    buttons = KeyboardButtons(cb)
+    buttons.start()
+    buttons._thread.join(timeout=2.0)
+    assert fired == ["replay", "play", "replay", "quit"]
+    assert buttons.held_pins() == []
+
+
+def test_button_callbacks_replay_defaults_to_noop(sim_settings):
+    cb = ButtonCallbacks(on_record_press=lambda: None)
+    cb.on_replay_press()  # must not raise: old callers never pass it
+    assert isinstance(make_buttons(sim_settings, cb), ButtonBackend)
 
 
 def test_neopixel_ring_falls_back_when_hardware_is_absent(sim_settings, caplog):
