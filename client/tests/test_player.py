@@ -545,6 +545,133 @@ def test_play_latest_demo_path_still_works_unchanged(tmp_path):
     assert controller.machine.state is State.IDLE
 
 
+# ------------------------------------------------------ BTN3 replay (PRD FR-26)
+def test_replay_last_plays_kept_copy_after_upload_deleted_the_queue_file(tmp_path):
+    """The whole reason BTN3 has its own copy: `queue.done()` unlinks the queued wav
+    seconds after a 2xx, so the newest-in-queue lookup would come up empty."""
+    settings = _settings(tmp_path)
+    audio = FakeAudio()
+    player = FakePlayer(clip=None)
+    controller = RecordController(settings, audio=audio, ring=NullRing(), player=player)
+
+    controller.start_record()
+    controller.stop_record()
+    [queued] = settings.queue_dir.glob("*.wav")
+    assert settings.replay_path.exists()
+    assert settings.replay_path.read_bytes() == queued.read_bytes()
+    queued.unlink()  # what the uploader does on 2xx
+
+    controller.replay_last()
+
+    assert controller.machine.state is State.PLAYING
+    assert audio.played == [settings.replay_path]
+    assert player.fetch_calls == 0  # local only, never the server
+    audio.finish()
+    assert controller.machine.state is State.IDLE
+    assert player.reported == []  # no play receipt for the kid's own clip
+
+
+def test_replay_last_with_nothing_kept_flashes_error(tmp_path):
+    settings = _settings(tmp_path)
+    audio = FakeAudio()
+    ring = NullRing()
+    controller = RecordController(settings, audio=audio, ring=ring, player=FakePlayer())
+
+    controller.replay_last()
+
+    assert controller.machine.state is State.IDLE
+    assert "error" in ring.flashes
+    assert audio.played == []
+
+
+def test_discarded_clip_does_not_replace_replay_copy(tmp_path):
+    settings = _settings(tmp_path)
+    audio = FakeAudio()
+    controller = RecordController(settings, audio=audio, ring=NullRing(), player=FakePlayer())
+
+    controller.start_record()
+    controller.stop_record()
+    kept = settings.replay_path.read_bytes()
+
+    # A too-short capture: FR-3 discards it, and BTN3 must still play the earlier one.
+    controller.s = settings.model_copy(update={"min_seconds": 99.0})
+    controller.start_record()
+    controller.stop_record()
+
+    assert settings.replay_path.read_bytes() == kept
+    assert list(settings.queue_dir.glob("*.wav")).__len__() == 1
+
+
+def test_replay_last_ignored_while_recording(tmp_path):
+    settings = _settings(tmp_path)
+    audio = FakeAudio()
+    controller = RecordController(settings, audio=audio, ring=NullRing(), player=FakePlayer())
+    controller.start_record()
+    controller.stop_record()
+
+    controller.start_record()
+    controller.replay_last()  # FR-10
+
+    assert controller.machine.state is State.RECORDING
+    assert audio.played == []
+    controller.stop_record()
+
+
+def test_replay_last_tap_while_replaying_stops(tmp_path):
+    settings = _settings(tmp_path)
+    audio = FakeAudio()
+    controller = RecordController(settings, audio=audio, ring=NullRing(), player=FakePlayer())
+    controller.start_record()
+    controller.stop_record()
+
+    controller.replay_last()
+    assert audio.is_playing
+    controller.replay_last()  # FR-9
+
+    assert not audio.is_playing
+    assert controller.machine.state is State.IDLE
+    assert len(audio.played) == 1
+
+
+def test_replay_last_tap_during_btn2_fetch_cancels_it(tmp_path):
+    """A BTN3 tap while BTN2's server fetch is in flight cancels the fetch instead of
+    stopping nothing and letting the server clip start later."""
+    settings = _settings(tmp_path)
+    audio = FakeAudio()
+    block = threading.Event()
+    clip = Clip(path=tmp_path / "cache" / "rec1.wav", id="rec1", from_cache=False)
+    player = FakePlayer(clip=clip, block=block)
+    controller = RecordController(settings, audio=audio, ring=NullRing(), player=player)
+
+    controller.play_next()  # worker blocks in fetch_next()
+    assert controller.machine.state is State.PLAYING
+    controller.replay_last()
+
+    assert controller.machine.state is State.IDLE
+    block.set()
+    _join_worker(controller)
+    assert audio.played == []  # the stale fetch was dropped, not played
+
+
+def test_replay_copy_failure_is_logged_and_clip_still_saved(tmp_path, caplog):
+    settings = _settings(tmp_path)
+    settings.replay_path.parent.parent.mkdir(parents=True, exist_ok=True)
+    settings.replay_path.parent.write_text("not a directory")  # mkdir/copy will fail
+    audio = FakeAudio()
+    saved: list[object] = []
+    controller = RecordController(
+        settings, audio=audio, ring=NullRing(), player=FakePlayer(), on_recorded=saved.append
+    )
+
+    with caplog.at_level("WARNING"):
+        controller.start_record()
+        controller.stop_record()
+
+    assert "event=replay_copy_failed" in caplog.text
+    assert len(saved) == 1
+    assert len(list(settings.queue_dir.glob("*.wav"))) == 1
+
+
 # ------------------------------------------- fast-fail timeouts + offline memo
 # A dead server that still ACCEPTS the TCP connection (Docker leaves its port proxy
 # bound after the container stops) hangs until the READ timeout. These cover the two
