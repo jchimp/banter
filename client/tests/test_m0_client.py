@@ -91,6 +91,12 @@ def test_stuck_button_problems_names_the_pin():
     assert "EDGE" in problem
 
 
+def test_stuck_button_problems_covers_replay_pin():
+    # BTN3 rides the same generic held_pins() path, so a stuck GPIO5 is named too.
+    (problem,) = stuck_button_problems([("replay", 5)])
+    assert "name=replay" in problem and "pin=5" in problem
+
+
 class _FakeButtons:
     """Stands in for GpioButtons so the preflight is testable with no GPIO."""
 
