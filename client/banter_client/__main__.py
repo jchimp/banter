@@ -48,6 +48,7 @@ class App:
                 on_record_press=self.controller.start_record,
                 on_record_release=self.controller.stop_record,
                 on_play_press=self.controller.play_next,
+                on_replay_press=self.controller.replay_last,
                 on_quit=self._shutdown_requested,
             ),
         )
