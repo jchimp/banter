@@ -13,6 +13,7 @@ import math
 import os
 import struct
 import threading
+import time
 import wave
 from collections.abc import Callable
 from pathlib import Path
@@ -197,6 +198,12 @@ def _settings(tmp_path: Path, **overrides) -> ClientSettings:
         # guard and prompt tones are covered in test_backends.py.
         record_arm_seconds=0.0,
         tones=False,
+        # Off unless a test asks for it: the BTN3 tests below assert `audio.played`
+        # right after stop_record(), which an auto-play would pollute.
+        auto_replay_seconds=0.0,
+        # Several tests compare cached/replay bytes to what was served or captured;
+        # leveling (FR-28) has its own tests in test_leveling.py and below.
+        play_leveling=False,
         _env_file=None,
     )
     defaults.update(overrides)
@@ -571,6 +578,32 @@ def test_replay_last_plays_kept_copy_after_upload_deleted_the_queue_file(tmp_pat
     assert player.reported == []  # no play receipt for the kid's own clip
 
 
+def test_replay_copy_is_leveled_and_the_upload_is_not(tmp_path, caplog):
+    """FR-28 lands on the derived copy only: the queued file must be what the mic
+    captured, byte for byte, because that is what the server archives."""
+    settings = _settings(tmp_path, play_leveling=True, play_target_dbfs=-16.0)
+    audio = FakeAudio()
+    controller = RecordController(settings, audio=audio, ring=NullRing(), player=FakePlayer())
+
+    with caplog.at_level("INFO"):
+        controller.start_record()
+        controller.stop_record()
+
+    [queued] = settings.queue_dir.glob("*.wav")
+    assert queued.read_bytes() == _wav_bytes(seconds=1.0, tone_hz=440.0)  # untouched
+    assert settings.replay_path.exists()
+    assert settings.replay_path.read_bytes() != queued.read_bytes()
+    assert "event=leveled file=" in caplog.text
+    assert not list(settings.replay_path.parent.glob("*.tmp*"))
+
+
+def test_player_builds_its_cache_with_a_leveler_when_enabled(tmp_path):
+    on = Player(_settings(tmp_path, play_leveling=True), session=FakeSession())
+    off = Player(_settings(tmp_path, play_leveling=False), session=FakeSession())
+    assert on.cache._leveler is not None
+    assert off.cache._leveler is None
+
+
 def test_replay_last_with_nothing_kept_flashes_error(tmp_path):
     settings = _settings(tmp_path)
     audio = FakeAudio()
@@ -670,6 +703,168 @@ def test_replay_copy_failure_is_logged_and_clip_still_saved(tmp_path, caplog):
     assert "event=replay_copy_failed" in caplog.text
     assert len(saved) == 1
     assert len(list(settings.queue_dir.glob("*.wav"))) == 1
+
+
+# ------------------------------------------ auto-replay after record (PRD FR-27)
+def _wait_for(predicate: Callable[[], bool], timeout: float = 2.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return predicate()
+
+
+def test_kept_clip_auto_plays_after_the_pause(tmp_path):
+    settings = _settings(tmp_path, auto_replay_seconds=0.05)
+    audio = FakeAudio()
+    ring = NullRing()
+    player = FakePlayer(clip=None)
+    controller = RecordController(settings, audio=audio, ring=ring, player=player)
+
+    controller.start_record()
+    controller.stop_record()
+    # The pause: IDLE with nothing played yet, so the success flash lands alone.
+    assert controller.machine.state is State.IDLE
+    assert audio.played == []
+
+    assert _wait_for(lambda: controller.machine.state is State.PLAYING)
+    assert audio.played == [settings.replay_path]
+    assert "playing" in ring.states
+    assert player.fetch_calls == 0  # local copy, never the server
+    audio.finish()
+    assert controller.machine.state is State.IDLE
+    assert player.reported == []
+
+
+def test_on_recorded_fires_before_the_auto_play_starts(tmp_path):
+    """The upload must never wait on the playback: the queue hook runs synchronously
+    inside stop_record(), the playback only after the pause."""
+    settings = _settings(tmp_path, auto_replay_seconds=0.05)
+    audio = FakeAudio()
+    order: list[str] = []
+    controller = RecordController(
+        settings,
+        audio=audio,
+        ring=NullRing(),
+        player=FakePlayer(),
+        on_recorded=lambda _meta: order.append("recorded"),
+    )
+    original_play = audio.play
+
+    def _play(path: Path, on_done: Callable[[], None] | None = None) -> None:
+        order.append("played")
+        original_play(path, on_done)
+
+    audio.play = _play  # type: ignore[method-assign]
+
+    controller.start_record()
+    controller.stop_record()
+    assert order == ["recorded"]
+    assert _wait_for(lambda: len(order) == 2)
+    assert order == ["recorded", "played"]
+    audio.finish()
+
+
+def test_auto_replay_disabled_never_plays(tmp_path):
+    settings = _settings(tmp_path, auto_replay_seconds=0.0)
+    audio = FakeAudio()
+    controller = RecordController(settings, audio=audio, ring=NullRing(), player=FakePlayer())
+
+    controller.start_record()
+    controller.stop_record()
+
+    assert controller._auto_replay_timer is None
+    time.sleep(0.1)
+    assert audio.played == []
+    assert controller.machine.state is State.IDLE
+
+
+def test_discarded_clip_does_not_auto_play(tmp_path):
+    settings = _settings(tmp_path, auto_replay_seconds=0.05, min_seconds=99.0)
+    audio = FakeAudio()
+    controller = RecordController(settings, audio=audio, ring=NullRing(), player=FakePlayer())
+
+    controller.start_record()
+    controller.stop_record()  # FR-3: too_short
+
+    assert controller._auto_replay_timer is None
+    time.sleep(0.1)
+    assert audio.played == []
+
+
+def test_new_hold_inside_the_pause_cancels_the_auto_play(tmp_path):
+    settings = _settings(tmp_path, auto_replay_seconds=0.05)
+    audio = FakeAudio()
+    controller = RecordController(settings, audio=audio, ring=NullRing(), player=FakePlayer())
+
+    controller.start_record()
+    controller.stop_record()
+    controller.start_record()  # try again, well inside the pause
+
+    assert controller._auto_replay_timer is None
+    time.sleep(0.1)
+    assert controller.machine.state is State.RECORDING
+    assert audio.played == []
+    controller.stop_record()
+    # ...and the second take gets its own auto-play.
+    assert _wait_for(lambda: controller.machine.state is State.PLAYING)
+    assert audio.played == [settings.replay_path]
+    audio.finish()
+
+
+def test_tap_during_auto_play_stops_it(tmp_path):
+    settings = _settings(tmp_path, auto_replay_seconds=0.05)
+    audio = FakeAudio()
+    controller = RecordController(settings, audio=audio, ring=NullRing(), player=FakePlayer())
+
+    controller.start_record()
+    controller.stop_record()
+    assert _wait_for(lambda: audio.is_playing)
+
+    controller.replay_last()  # FR-9
+
+    assert not audio.is_playing
+    assert controller.machine.state is State.IDLE
+    assert len(audio.played) == 1
+
+
+def test_auto_replay_skipped_when_box_is_no_longer_idle(tmp_path, caplog):
+    """A BTN2 fetch started inside the pause owns the box; the auto-play is dropped."""
+    settings = _settings(tmp_path, auto_replay_seconds=0.05)
+    audio = FakeAudio()
+    block = threading.Event()
+    clip = Clip(path=tmp_path / "cache" / "rec1.wav", id="rec1", from_cache=False)
+    player = FakePlayer(clip=clip, block=block)
+    controller = RecordController(settings, audio=audio, ring=NullRing(), player=player)
+
+    controller.start_record()
+    controller.stop_record()
+    controller.play_next()  # worker blocks in fetch_next(); state is PLAYING
+    with caplog.at_level("INFO"):
+        assert _wait_for(lambda: controller._auto_replay_timer is None)
+        time.sleep(0.05)
+
+    assert "event=auto_replay_skipped" in caplog.text
+    assert audio.played == []
+    block.set()
+    _join_worker(controller)
+    assert audio.played == [clip.path]  # only BTN2's clip, never the auto-play
+    audio.finish()
+
+
+def test_close_cancels_a_pending_auto_play(tmp_path):
+    settings = _settings(tmp_path, auto_replay_seconds=0.05)
+    audio = FakeAudio()
+    controller = RecordController(settings, audio=audio, ring=NullRing(), player=FakePlayer())
+
+    controller.start_record()
+    controller.stop_record()
+    controller.close()
+
+    assert controller._auto_replay_timer is None
+    time.sleep(0.1)
+    assert audio.played == []
 
 
 # ------------------------------------------- fast-fail timeouts + offline memo
