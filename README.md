@@ -53,9 +53,10 @@ uv run banter-demo
 #   [r] record toggle   [p] play   [l] replay last   [q] quit
 ```
 
-`r` starts recording from your laptop mic, `r` again stops and writes a 16 kHz mono
-WAV to the queue dir, `p` plays the newest clip back, `l` replays the last kept copy
-(what BTN3 does on the box: the copy outlives the upload). The terminal ring prints the
+`r` starts recording from your laptop mic, `r` again stops, writes a 16 kHz mono
+WAV to the queue dir and, half a second later, plays it straight back (FR-27; set
+`BANTER_AUTO_REPLAY_SECONDS=0` to turn that off). `p` plays the newest clip back, `l`
+replays the last kept copy (what BTN3 does on the box: the copy outlives the upload). The terminal ring prints the
 state the NeoPixel would be showing. Hold-to-record is GPIO-only — line-based stdin
 can't express a hold, so the sim is always toggle mode.
 
@@ -233,6 +234,13 @@ sudo cp banter-client.service /etc/systemd/system/
 sudo systemctl enable --now banter-client
 journalctl -u banter-client -f
 ```
+
+**Levels.** Jokes are leveled on the box before they are played (`event=leveled
+gain_db=...` in the journal shows what each clip got), so a quiet parent and a loud
+kid come out alike and both sit next to the beeps. If the whole box is too quiet or
+too loud, set the mixer once at boot instead of fighting `alsamixer`: find the control
+with `amixer -c 0 scontrols`, then put it in `BANTER_ALSA_PLAYBACK_CONTROL` and
+`BANTER_ALSA_PLAYBACK_PERCENT` (same pair with `CAPTURE` for the mic gain).
 
 Three things have to name the same account and the same paths: `User=` in
 `banter-client.service`, `WorkingDirectory=`/`EnvironmentFile=` in that unit, and
