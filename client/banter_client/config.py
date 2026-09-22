@@ -40,6 +40,13 @@ class ClientSettings(BaseSettings):
     alsa_capture: str = "plughw:0,0"
     alsa_playback: str = "plughw:0,0"
     sample_rate: int = 16000
+    # Optional mixer levels applied once at startup so the box boots the same every
+    # time, whatever the last alsamixer session left. Control names are per card
+    # (`amixer -c N scontrols`), so they live in .env, never in code. Empty = skip.
+    alsa_playback_control: str = ""
+    alsa_playback_percent: int = Field(80, ge=0, le=100)
+    alsa_capture_control: str = ""
+    alsa_capture_percent: int = Field(80, ge=0, le=100)
 
     # --- buttons -----------------------------------------------------------
     pin_record: int = 17
@@ -65,12 +72,26 @@ class ClientSettings(BaseSettings):
     silence_dbfs: float = -45.0
     voice_margin_db: float = Field(6.0, ge=0.0)
     min_voiced_seconds: float = Field(0.5, ge=0.0)
+    # After a kept clip, wait this long past the success flash and then play the clip
+    # straight back from `replay_path` so the kid hears the joke (FR-27). The pause
+    # is there so the flash and the audio don't land on top of each other. 0 disables.
+    auto_replay_seconds: float = Field(0.5, ge=0.0)
 
     # --- tones (tones.py) ----------------------------------------------------
     # The "go ahead" beep right before capture starts and the falling double-blip on a
     # discard. One switch for both; volume is linear amplitude, 0..1.
     tones: bool = True
     tone_volume: float = Field(0.5, ge=0.0, le=1.0)
+
+    # --- playback leveling (leveling.py, FR-28) --------------------------------
+    # Clips the box plays are gained once, when written to the play cache or the
+    # replay copy, so a whispered joke and a shouted one land at the same level and
+    # both sit next to the tones (a 0.5 sine is about -9 dBFS RMS). The upload and the
+    # server archive are never touched. max_gain caps the boost so near-silence is not
+    # raised into hiss; the clip's own peak is always limited regardless.
+    play_leveling: bool = True
+    play_target_dbfs: float = -16.0
+    play_max_gain_db: float = Field(20.0, ge=0.0)
 
     # --- ring --------------------------------------------------------------
     ring_pixels: int = 16
