@@ -256,3 +256,57 @@ def test_oldest_skips_a_corrupt_entry_that_appears_after_startup(tmp_path):
     os.utime(corrupt, (BASE_MTIME - 100, BASE_MTIME - 100))  # oldest, so it'd win
 
     assert cache.oldest() == cache.path_for("good")
+
+
+# ----------------------------------------------------------- leveler hook (FR-28)
+def test_store_commits_the_leveled_copy(tmp_path):
+    seen: list[tuple[Path, Path]] = []
+
+    def leveler(src: Path, dest: Path) -> None:
+        seen.append((src, dest))
+        dest.write_bytes(_wav_bytes(seconds=0.1))  # distinguishable from the input
+
+    cache = PlayCache(tmp_path / "cache", max_entries=5, leveler=leveler)
+    served = _wav_bytes(seconds=0.05)
+
+    path = cache.store("abc", served)
+
+    assert len(seen) == 1
+    assert seen[0][0].name == "abc.wav.tmp"  # the validated download, not the raw body
+    assert path.read_bytes() == _wav_bytes(seconds=0.1)
+    assert path.read_bytes() != served
+    assert not list(cache.cache_dir.glob("*.tmp*"))  # both temporaries cleaned up
+
+
+def test_store_caches_as_served_when_leveling_fails(tmp_path, caplog):
+    def leveler(src: Path, dest: Path) -> None:
+        raise OSError("disk full")
+
+    cache = PlayCache(tmp_path / "cache", max_entries=5, leveler=leveler)
+    served = _wav_bytes()
+
+    with caplog.at_level("WARNING"):
+        path = cache.store("abc", served)
+
+    assert path.read_bytes() == served
+    assert "event=cache_level_failed id=abc" in caplog.text
+    assert not list(cache.cache_dir.glob("*.tmp*"))
+
+
+def test_leveler_never_sees_a_corrupt_body(tmp_path):
+    calls: list[Path] = []
+    cache = PlayCache(tmp_path / "cache", max_entries=5, leveler=lambda s, d: calls.append(s))
+    with pytest.raises(CorruptAudioError):
+        cache.store("abc", b"<html>portal</html>")
+    assert calls == []
+
+
+def test_construction_sweeps_a_leveling_temporary(tmp_path):
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir(parents=True)
+    stale = cache_dir / "abc.wav.tmp.lv"
+    stale.write_bytes(_wav_bytes())
+
+    PlayCache(cache_dir, max_entries=5)
+
+    assert not stale.exists()
