@@ -72,6 +72,52 @@ def alsa_device_ok(device: str, pcms: list[str], cards: dict[int, str]) -> bool:
     return False
 
 
+def card_from_device(device: str) -> str | None:
+    """Pure: the `-c` argument `amixer` wants, taken from an ALSA PCM string.
+
+    `plughw:1,0` / `hw:1` -> "1"; `plughw:CARD=Speaker,DEV=0` -> "Speaker". A bare
+    `default` or a custom PCM name gives None: there is no card to address.
+    """
+    m = re.search(r"CARD=([^,]+)", device)
+    if m:
+        return m.group(1)
+    m = re.match(r"(?:plug)?hw:(\d+)", device)
+    if m:
+        return m.group(1)
+    return None
+
+
+def amixer_cmd(card: str, control: str, percent: int) -> list[str]:
+    """Pure: `amixer -q -c <card> sset <control> <percent>%`."""
+    return ["amixer", "-q", "-c", card, "sset", control, f"{percent}%"]
+
+
+def set_mixer_level(device: str, control: str, percent: int) -> str | None:
+    """Impure: set one mixer control on the card behind `device`.
+
+    Returns a problem string for the caller to log, or None on success. Never raises:
+    the mixer is a nicety, and a box that boots quiet is better than one that doesn't
+    boot.
+    """
+    card = card_from_device(device)
+    if card is None:
+        return f"device={device!r} names no card (use hw:N / plughw:CARD=name)"
+    try:
+        out = subprocess.run(
+            amixer_cmd(card, control, percent),
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"card={card} control={control!r} err={exc}"
+    if out.returncode != 0:
+        detail = out.stderr.strip() or f"amixer exit {out.returncode}"
+        return f"card={card} control={control!r} err={detail}"
+    return None
+
+
 def _alsa_listing(tool: str, flag: str) -> str:
     """Impure: run `arecord|aplay -L|-l`. Empty string if the tool is missing."""
     try:
