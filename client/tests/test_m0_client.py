@@ -166,3 +166,76 @@ def test_check_buttons_skips_non_gpio_backends(tmp_path, monkeypatch, caplog):
     with caplog.at_level("ERROR"):
         app._check_buttons()
     assert "event=button_stuck" not in caplog.text
+
+
+# ---------------------------------------------------------- mixer preflight
+def _alsa_settings(tmp_path, **over) -> ClientSettings:
+    d = dict(
+        audio_backend="synthetic",  # so App() never spawns arecord; the guard reads config
+        button_backend="keyboard",
+        ring_backend="null",
+        queue_dir=tmp_path / "queue",
+        cache_dir=tmp_path / "cache",
+        _env_file=None,
+    )
+    d.update(over)
+    return ClientSettings(**d)
+
+
+def test_set_mixer_levels_skips_non_alsa_backends(tmp_path, monkeypatch):
+    calls: list[tuple] = []
+    monkeypatch.setattr(
+        "banter_client.__main__.set_mixer_level", lambda *a: calls.append(a) or None
+    )
+    app = App(_alsa_settings(tmp_path, alsa_playback_control="Master"))
+    app._set_mixer_levels()
+    assert calls == []
+
+
+def test_set_mixer_levels_skips_empty_controls(tmp_path, monkeypatch):
+    calls: list[tuple] = []
+    monkeypatch.setattr(
+        "banter_client.__main__.set_mixer_level", lambda *a: calls.append(a) or None
+    )
+    app = App(_alsa_settings(tmp_path))
+    app.s = app.s.model_copy(update={"audio_backend": "alsa"})
+    app._set_mixer_levels()
+    assert calls == []
+
+
+def test_set_mixer_levels_applies_each_configured_side(tmp_path, monkeypatch, caplog):
+    calls: list[tuple] = []
+    monkeypatch.setattr(
+        "banter_client.__main__.set_mixer_level", lambda *a: calls.append(a) or None
+    )
+    app = App(
+        _alsa_settings(
+            tmp_path,
+            alsa_playback="plughw:CARD=Speaker,DEV=0",
+            alsa_playback_control="PCM",
+            alsa_playback_percent=70,
+            alsa_capture="plughw:CARD=Webcam,DEV=0",
+            alsa_capture_control="Mic",
+            alsa_capture_percent=90,
+        )
+    )
+    app.s = app.s.model_copy(update={"audio_backend": "alsa"})
+    with caplog.at_level("INFO"):
+        app._set_mixer_levels()
+    assert calls == [
+        ("plughw:CARD=Speaker,DEV=0", "PCM", 70),
+        ("plughw:CARD=Webcam,DEV=0", "Mic", 90),
+    ]
+    assert "event=mixer_set side=playback control='PCM' percent=70" in caplog.text
+    assert "event=mixer_set side=capture control='Mic' percent=90" in caplog.text
+
+
+def test_set_mixer_levels_logs_and_continues_on_failure(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(
+        "banter_client.__main__.set_mixer_level", lambda *a: "card=0 control='Nope' err=boom"
+    )
+    app = App(_alsa_settings(tmp_path, alsa_playback_control="Nope"))
+    app.s = app.s.model_copy(update={"audio_backend": "alsa"})
+    with caplog.at_level("ERROR"):
+        app._set_mixer_levels()  # must not raise
+    assert "event=mixer_failed side=playback card=0 control='Nope' err=boom" in caplog.text
