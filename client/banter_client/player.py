@@ -17,6 +17,7 @@ import requests
 
 from banter_client.cache import CorruptAudioError, PlayCache
 from banter_client.config import ClientSettings
+from banter_client.leveling import leveler_for
 
 log = logging.getLogger("banter.player")
 
@@ -41,7 +42,9 @@ class Player:
         session: requests.Session | None = None,
     ) -> None:
         self.settings = settings
-        self.cache = cache or PlayCache(settings.cache_dir, settings.play_cache_size)
+        self.cache = cache or PlayCache(
+            settings.cache_dir, settings.play_cache_size, leveler=leveler_for(settings)
+        )
         # Injectable so tests never open a socket, same discipline as Uploader.
         self.session = session or requests.Session()
         # Last clip handed back from the offline fallback, so repeated offline taps
