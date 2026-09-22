@@ -14,7 +14,7 @@ import threading
 from pathlib import Path
 from types import FrameType
 
-from banter_client.backends.audio import check_alsa_devices
+from banter_client.backends.audio import check_alsa_devices, set_mixer_level
 from banter_client.backends.base import ButtonCallbacks
 from banter_client.backends.factory import describe, make_buttons
 from banter_client.config import ClientSettings, get_settings
@@ -78,6 +78,7 @@ class App:
         )
 
         self._check_audio_devices()
+        self._set_mixer_levels()
         self._check_buttons()
 
         self.uploader.start()
@@ -107,6 +108,29 @@ class App:
             return
         for problem in check_alsa_devices(self.s.alsa_capture, self.s.alsa_playback):
             log.error("event=alsa_device_missing %s", problem)
+
+    def _set_mixer_levels(self) -> None:
+        """Put the ALSA mixer at the configured level so every boot sounds the same.
+
+        Opt-in per side: an empty control name leaves that side alone, because control
+        names differ per card and a wrong one is a harmless no-op we'd rather not guess
+        at. Same contract as `_check_audio_devices`: logged, never fatal.
+        """
+        if self.s.audio_backend != "alsa":
+            return
+        s = self.s
+        sides = (
+            ("playback", s.alsa_playback, s.alsa_playback_control, s.alsa_playback_percent),
+            ("capture", s.alsa_capture, s.alsa_capture_control, s.alsa_capture_percent),
+        )
+        for side, device, control, percent in sides:
+            if not control:
+                continue
+            problem = set_mixer_level(device, control, percent)
+            if problem:
+                log.error("event=mixer_failed side=%s %s", side, problem)
+            else:
+                log.info("event=mixer_set side=%s control=%r percent=%d", side, control, percent)
 
     def _check_buttons(self) -> None:
         """Warn if a button is already reading pressed before we start listening.
