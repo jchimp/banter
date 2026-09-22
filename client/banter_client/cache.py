@@ -13,7 +13,7 @@ import contextlib
 import logging
 import os
 import wave
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 log = logging.getLogger("banter.cache")
@@ -41,13 +41,21 @@ def is_playable_wav(path: Path) -> bool:
 class PlayCache:
     """Bounded, on-disk LRU cache of played clips rooted at `cache_dir`."""
 
-    def __init__(self, cache_dir: Path, max_entries: int) -> None:
+    def __init__(
+        self,
+        cache_dir: Path,
+        max_entries: int,
+        leveler: Callable[[Path, Path], object] | None = None,
+    ) -> None:
         self.cache_dir = cache_dir
         self.max_entries = max(1, max_entries)
+        # `leveler(src, dest)` rewrites a validated download at one loudness before it
+        # is committed (leveling.level_wav). None caches clips exactly as served.
+        self._leveler = leveler
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         # A tmp left over from a crash mid-write is not a valid entry; drop it so
         # it can't be mistaken for one and doesn't linger forever.
-        for tmp in self.cache_dir.glob("*.wav.tmp"):
+        for tmp in self.cache_dir.glob("*.wav.tmp*"):
             tmp.unlink(missing_ok=True)
         self._sweep_corrupt()
 
@@ -105,6 +113,8 @@ class PlayCache:
                 tmp.unlink(missing_ok=True)
                 log.warning("event=cache_rejected id=%s bytes=%d reason=not_wav", rec_id, size)
                 raise CorruptAudioError(f"{rec_id}: response body is not a playable WAV")
+            if self._leveler is not None:
+                tmp = self._level(tmp, rec_id)
             os.replace(tmp, dest)
         except OSError:
             tmp.unlink(missing_ok=True)
@@ -115,6 +125,21 @@ class PlayCache:
         # (e.g. one mid-playback) from being evicted by this store().
         self._evict(keep=keep)
         return dest
+
+    def _level(self, tmp: Path, rec_id: str) -> Path:
+        """Run the leveler over `tmp`; returns the path to commit. Best-effort: if
+        leveling fails the clip is cached as served, which is what it would have been
+        before leveling existed. `tmp` is already known to be a playable WAV."""
+        assert self._leveler is not None
+        leveled = tmp.with_name(tmp.name + ".lv")
+        try:
+            self._leveler(tmp, leveled)
+        except OSError as exc:
+            log.warning("event=cache_level_failed id=%s err=%s", rec_id, exc)
+            leveled.unlink(missing_ok=True)
+            return tmp
+        tmp.unlink(missing_ok=True)
+        return leveled
 
     def touch(self, rec_id: str) -> None:
         """Mark `rec_id` as most-recently-used by bumping its mtime.
