@@ -20,6 +20,7 @@ from banter_client.analysis import ClipStats, analyze_wav, reject_reason
 from banter_client.backends.base import AudioBackend, RingBackend
 from banter_client.backends.factory import make_audio, make_ring
 from banter_client.config import ClientSettings
+from banter_client.leveling import leveler_for
 from banter_client.player import Clip, Player
 from banter_client.queue import RecordingMeta, probe_duration_ms
 from banter_client.state import State, StateMachine
@@ -56,6 +57,9 @@ class RecordController:
         self.ring = ring or make_ring(settings)
         self.on_recorded = on_recorded
         self.player = player
+        # The replay copy is derived data, so it is where leveling (FR-28) happens;
+        # the queued original goes to the server exactly as captured.
+        self._leveler = leveler_for(settings)
         self.current: Path | None = None
         self._watchdog: threading.Timer | None = None
         # Arm timer: BTN1 pressed but capture not yet started (record_arm_seconds).
@@ -71,6 +75,8 @@ class RecordController:
         # drop the result instead of starting playback (Step 8 tap-during-fetch race).
         self._play_generation = 0
         self._play_worker: threading.Thread | None = None
+        # Pause between the success flash and the auto-playback of a kept clip (FR-27).
+        self._auto_replay_timer: threading.Timer | None = None
         settings.queue_dir.mkdir(parents=True, exist_ok=True)
         self._tones: dict[str, tuple[Path, float]] = {}
         if settings.tones:
@@ -97,6 +103,9 @@ class RecordController:
         if self.machine.is_busy() or not self.machine.to(State.RECORDING):
             log.info("event=record_ignored state=%s", self.machine.state)
             return
+        # A new hold inside the auto-replay pause wins: the kid wants to try again,
+        # not hear the last take.
+        self._cancel_auto_replay()
         self.ring.show("recording")
         self._pressed_at = time.monotonic()
         if self.s.record_arm_seconds > 0:
@@ -213,6 +222,12 @@ class RecordController:
                 self.on_recorded(meta)
         self.machine.to(State.IDLE)
         self.ring.show("idle")
+        # Armed only after IDLE and after on_recorded: RECORDING -> PLAYING is not a
+        # legal transition, and the upload must never wait on the playback.
+        if reason is None and self.s.auto_replay_seconds > 0:
+            self._auto_replay_timer = threading.Timer(self.s.auto_replay_seconds, self._auto_replay)
+            self._auto_replay_timer.daemon = True
+            self._auto_replay_timer.start()
 
     def _discard(
         self, path: Path | None, reason: str, captured: float, held: float, stats: ClipStats | None
@@ -246,7 +261,10 @@ class RecordController:
         tmp = dest.with_name(dest.name + ".tmp")
         try:
             dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(path, tmp)
+            if self._leveler is not None:
+                self._leveler(path, tmp)
+            else:
+                shutil.copyfile(path, tmp)
             os.replace(tmp, dest)
         except OSError as exc:
             log.warning("event=replay_copy_failed err=%s", exc)
@@ -255,6 +273,11 @@ class RecordController:
         if self._arm:
             self._arm.cancel()
             self._arm = None
+
+    def _cancel_auto_replay(self) -> None:
+        if self._auto_replay_timer:
+            self._auto_replay_timer.cancel()
+            self._auto_replay_timer = None
 
     def _build_meta(self, path: Path, duration: float) -> RecordingMeta:
         return RecordingMeta(
@@ -271,7 +294,7 @@ class RecordController:
             self._watchdog.cancel()
             self._watchdog = None
 
-    # -- play (local files: demo 'p', BTN3) ---------------------------------------
+    # -- play (local files: demo 'p', BTN3, auto-replay after record) -------------
     def play_latest(self) -> None:
         """Play the newest queued clip (demo 'p'); a tap while playing stops it (FR-9)."""
         with self._lock:
@@ -285,6 +308,19 @@ class RecordController:
         with self._lock:
             dest = self.s.replay_path
             self._play_local(dest if dest.exists() else None, "replaying", "replay_empty")
+
+    def _auto_replay(self) -> None:
+        """Timer body for FR-27: play the clip just kept, unless the box moved on
+        during the pause (BTN1 held again, a BTN2 fetch in flight, an upload in
+        progress). Dropped, never queued -- a stale auto-play surprising the kid
+        later is worse than no auto-play."""
+        with self._lock:
+            self._auto_replay_timer = None
+            if self.machine.state is not State.IDLE:
+                log.info("event=auto_replay_skipped state=%s", self.machine.state)
+                return
+            dest = self.s.replay_path
+            self._play_local(dest if dest.exists() else None, "auto_replaying", "auto_replay_empty")
 
     def _play_local(self, clip: Path | None, event: str, empty_event: str) -> None:
         if self.machine.state is State.PLAYING:
@@ -404,6 +440,7 @@ class RecordController:
         """Release backends. Safe to call more than once."""
         self._cancel_arm()
         self._cancel_watchdog()
+        self._cancel_auto_replay()
         # Bump the generation first: a worker still blocked in fetch_next() past the
         # join below would otherwise wake up and call play() on an already-closed
         # backend. The mismatch makes it drop the clip and return instead.
