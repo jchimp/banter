@@ -56,6 +56,12 @@ Pi (not Docker — 512 MB RAM, and ALSA passthrough isn't worth the trouble).
 - **FR-6** Upload retries with exponential backoff (2s → 60s cap), indefinitely.
   A dead server or dropped WiFi must never lose a joke.
 - **FR-7** Recordings from kidbox always carry `source=kid`, `origin=kidbox`.
+- **FR-27** After a kept clip (passed FR-3), pause `AUTO_REPLAY_SECONDS` (default 0.5)
+  past the success flash, then play it straight back from the FR-26 local copy so the
+  kid hears the joke. No server call, no play receipt. FR-9 (tap while playing stops)
+  and FR-10 (BTN1 ignored while playing) apply; a new BTN1 hold inside the pause
+  cancels the playback instead. Dropped, never queued, if the box is busy when the
+  pause ends. `0` disables.
 
 ### 3.2 kidbox — play (BTN2; GPIO22, or GPIO27 on the Pi 4 build)
 - **FR-8** Tap requests one recording from the server and plays it through the
@@ -68,6 +74,13 @@ Pi (not Docker — 512 MB RAM, and ALSA passthrough isn't worth the trouble).
 - **FR-12** Server unreachable → play a locally cached fallback clip if present,
   otherwise the error tone. Cache the last N (`PLAY_CACHE_SIZE`, default 10) played
   clips on disk.
+- **FR-28** Every clip the box plays is leveled once, when it is written to the play
+  cache or to the FR-26 replay copy: gain over the voiced windows to
+  `PLAY_TARGET_DBFS` (default -16 dBFS RMS, next to the tones), boost capped at
+  `PLAY_MAX_GAIN_DB` (default 20) and by the clip's own peak. The queued upload and
+  the server's files are never altered. `PLAY_LEVELING=false` disables. Optionally
+  `ALSA_PLAYBACK_CONTROL` / `ALSA_CAPTURE_CONTROL` + `_PERCENT` set the mixer once at
+  startup so the box boots at a known level.
 
 ### 3.2b kidbox — replay (BTN3, GPIO5 on both builds)
 - **FR-26** Tap plays the last clip this device kept (passed FR-3), from a local copy
