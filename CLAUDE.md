@@ -121,6 +121,10 @@ for the Codec Zero build, where GPIO27 is the HAT's own button and would collide
 - NeoPixel on SPI needs `dtparam=spi=on` and `core_freq_min=500` in
   `/boot/firmware/config.txt`. Using SPI (not PWM) is deliberate: PWM conflicts with
   onboard audio and needs root. Don't "simplify" it back to GPIO18.
+- Mixer control names are per card and differ between the Codec Zero and a USB
+  speaker. They come from `ALSA_*_CONTROL` in `.env` (empty = don't touch the mixer);
+  never hardcode one. Loudness is handled in software by `leveling.py` on the
+  derived copies only; the queued upload and the server archive stay raw.
 - Cap LED brightness at `LED_MAX_BRIGHTNESS` (0.3). 16 RGBW at full white pulls ~1 A
   and browns out the Pi.
 
