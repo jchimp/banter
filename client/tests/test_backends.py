@@ -6,6 +6,7 @@ If these pass on your laptop, the loop works; only the backend swaps on the Pi.
 import io
 import math
 import struct
+import subprocess
 import sys
 import time
 import wave
@@ -16,10 +17,13 @@ import pytest
 from banter_client.backends.audio import (
     SyntheticAudio,
     alsa_device_ok,
+    amixer_cmd,
     aplay_cmd,
     arecord_cmd,
+    card_from_device,
     parse_cards,
     parse_pcm_names,
+    set_mixer_level,
 )
 from banter_client.backends.base import AudioBackend, ButtonBackend, ButtonCallbacks, RingBackend
 from banter_client.backends.factory import make_audio, make_buttons, make_ring
@@ -47,6 +51,9 @@ def sim_settings(tmp_path) -> ClientSettings:
         # ...and SyntheticAudio's back-to-back capture is ~50 ms of tone: too short
         # to have the dynamics the content gate wants, so that gate is off here.
         min_voiced_seconds=0.0,
+        # Auto-replay after record (FR-27) is covered in test_player.py; here it would
+        # start a playback in the middle of a loop assertion.
+        auto_replay_seconds=0.0,
         _env_file=None,
     )
 
@@ -132,6 +139,65 @@ def test_alsa_device_ok_with_empty_listings_rejects():
     # check_alsa_devices skips the check entirely when both listings are empty; this
     # just pins the pure function's own behaviour.
     assert alsa_device_ok("plughw:1,0", [], {}) is False
+
+
+# --------------------------------------------------------------------- mixer
+@pytest.mark.parametrize(
+    "device, expected",
+    [
+        ("plughw:0,0", "0"),
+        ("hw:1", "1"),
+        ("plughw:CARD=Speaker,DEV=0", "Speaker"),
+        ("sysdefault:CARD=Webcam", "Webcam"),
+        ("default", None),
+        ("", None),
+    ],
+)
+def test_card_from_device(device, expected):
+    assert card_from_device(device) == expected
+
+
+def test_amixer_cmd_shape():
+    assert amixer_cmd("0", "Master", 80) == ["amixer", "-q", "-c", "0", "sset", "Master", "80%"]
+
+
+def test_set_mixer_level_runs_amixer(monkeypatch):
+    calls: list[list[str]] = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert set_mixer_level("plughw:CARD=Speaker,DEV=0", "PCM", 75) is None
+    assert calls == [["amixer", "-q", "-c", "Speaker", "sset", "PCM", "75%"]]
+
+
+def test_set_mixer_level_reports_a_bad_control(monkeypatch):
+    def fake_run(args, **kwargs):
+        return subprocess.CompletedProcess(
+            args, 1, stdout="", stderr="amixer: Unable to find simple control 'Nope',0"
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    problem = set_mixer_level("plughw:0,0", "Nope", 80)
+    assert problem is not None
+    assert "Unable to find simple control" in problem
+
+
+def test_set_mixer_level_reports_a_missing_amixer(monkeypatch):
+    def fake_run(args, **kwargs):
+        raise FileNotFoundError("amixer")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    problem = set_mixer_level("plughw:0,0", "Master", 80)
+    assert problem is not None and "amixer" in problem
+
+
+def test_set_mixer_level_needs_a_card():
+    # `default` names no card, so there is nothing for -c; say so instead of guessing 0.
+    problem = set_mixer_level("default", "Master", 80)
+    assert problem is not None and "names no card" in problem
 
 
 # ------------------------------------------------------------------- factory
@@ -367,6 +433,7 @@ def _gate_settings(tmp_path, **overrides) -> ClientSettings:
         cache_dir=tmp_path / "cache",
         record_arm_seconds=0.0,
         tones=True,
+        auto_replay_seconds=0.0,
         _env_file=None,
     )
     defaults.update(overrides)
