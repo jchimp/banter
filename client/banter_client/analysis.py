@@ -43,6 +43,35 @@ def _dbfs(values: np.ndarray) -> np.ndarray:
     return 20.0 * np.log10(np.maximum(values, 10 ** (DBFS_FLOOR / 20.0)))
 
 
+def load_mono(path: Path) -> tuple[np.ndarray, int] | None:
+    """Samples in [-1, 1] (float64) and the sample rate, or None if `path` is not a
+    readable 16-bit PCM WAV. Multi-channel input is averaged to mono. Shared with
+    `leveling.py` so both measure exactly the same signal."""
+    try:
+        with wave.open(str(path), "rb") as wf:
+            rate, channels, width = wf.getframerate(), wf.getnchannels(), wf.getsampwidth()
+            raw = wf.readframes(wf.getnframes())
+    except (wave.Error, OSError, EOFError):
+        return None
+    if rate <= 0 or width != 2 or channels < 1:
+        return None
+
+    samples = np.frombuffer(raw, dtype="<i2")
+    if channels > 1:
+        usable = len(samples) - len(samples) % channels
+        samples = samples[:usable].reshape(-1, channels).mean(axis=1)
+    return samples.astype(np.float64) / 32768.0, rate
+
+
+def window_rms_db(x: np.ndarray, rate: int, window_ms: int) -> np.ndarray:
+    """RMS in dBFS of each consecutive `window_ms` slice of `x`. A clip shorter than
+    one window is a single window. `x` must be non-empty."""
+    win = max(1, int(rate * window_ms / 1000))
+    n = x.size // win
+    windows = x[: n * win].reshape(n, win) if n else x.reshape(1, -1)
+    return _dbfs(np.sqrt(np.mean(windows**2, axis=1)))
+
+
 def analyze_wav(
     path: Path,
     *,
@@ -58,34 +87,22 @@ def analyze_wav(
         voice_margin_db: a voiced window must also clear the noise floor by this much.
         window_ms: analysis window; 100 ms is roughly one syllable.
     """
-    try:
-        with wave.open(str(path), "rb") as wf:
-            rate, channels, width = wf.getframerate(), wf.getnchannels(), wf.getsampwidth()
-            raw = wf.readframes(wf.getnframes())
-    except (wave.Error, OSError, EOFError):
+    loaded = load_mono(path)
+    if loaded is None:
         return None
-    if rate <= 0 or width != 2 or channels < 1:
-        return None
-
-    samples = np.frombuffer(raw, dtype="<i2")
-    if channels > 1:
-        usable = len(samples) - len(samples) % channels
-        samples = samples[:usable].reshape(-1, channels).mean(axis=1)
-    x = samples.astype(np.float64) / 32768.0
+    x, rate = loaded
     if x.size == 0:
         return ClipStats(0.0, DBFS_FLOOR, DBFS_FLOOR, 0.0)
 
     duration = x.size / rate
     peak = float(_dbfs(np.array([np.max(np.abs(x))]))[0])
 
-    win = max(1, int(rate * window_ms / 1000))
-    n = x.size // win
-    windows = x[: n * win].reshape(n, win) if n else x.reshape(1, -1)
-    rms_db = _dbfs(np.sqrt(np.mean(windows**2, axis=1)))
+    rms_db = window_rms_db(x, rate, window_ms)
     floor = float(np.percentile(rms_db, FLOOR_PERCENTILE))
     threshold = max(silence_dbfs, floor + voice_margin_db)
     # >= so that voice_margin_db=0 counts a window sitting exactly on the floor.
-    voiced = int(np.count_nonzero(rms_db >= threshold)) * (windows.shape[1] / rate)
+    window_seconds = min(max(1, int(rate * window_ms / 1000)), x.size) / rate
+    voiced = int(np.count_nonzero(rms_db >= threshold)) * window_seconds
 
     return ClipStats(duration, peak, floor, float(voiced))
 
